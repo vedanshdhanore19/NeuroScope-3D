@@ -6,12 +6,12 @@ from typing import Optional
 
 import nibabel as nib
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.config import TEMP_DIR, DISCLAIMER_TEXT, MAX_FILE_SIZE_BYTES
+from app.config import TEMP_DIR, DISCLAIMER_TEXT, MAX_FILE_SIZE_BYTES, DATASET_PROFILE, DATASET_SOURCES, MODEL_BUNDLE_SOURCE, MODEL_BUNDLE_VERSION, MODEL_TRAINING_DATASET
 from app.database import init_db, get_db, Study, InferenceRun, Volumetrics, EvaluationMetric, FailureLog
 from app.validator import (
     validate_study_set, validate_expert_mask, ValidationError
@@ -90,6 +90,9 @@ async def validate_study(
     t2: UploadFile = File(...),
     flair: UploadFile = File(...),
     expert_mask: Optional[UploadFile] = File(None),
+    dataset_profile: str = Form(DATASET_PROFILE),
+    case_id: Optional[str] = Form(None),
+    source_reference: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     run_id = str(uuid.uuid4())
@@ -106,10 +109,10 @@ async def validate_study(
         if expert_mask is not None:
             await _save_upload_limited(expert_mask, str(expert_path))
 
-        val_result = validate_study_set(file_paths)
+        val_result = validate_study_set(file_paths, dataset_profile=dataset_profile)
         if expert_mask is not None:
             reference_img = nib.load(file_paths["t1"])
-            validate_expert_mask(str(expert_path), reference_img)
+            validate_expert_mask(str(expert_path), reference_img, dataset_profile=dataset_profile)
 
         study_rec = Study(
             study_id=run_id,
@@ -118,6 +121,9 @@ async def validate_study(
             t2_filename=t2.filename,
             flair_filename=flair.filename,
             expert_mask_filename=expert_mask.filename if expert_mask else None,
+            dataset_profile=dataset_profile,
+            case_id=(case_id.strip()[:255] if case_id and case_id.strip() else None),
+            source_reference=(source_reference.strip()[:1000] if source_reference and source_reference.strip() else DATASET_SOURCES.get(dataset_profile)),
             sha256_hash=val_result["combined_hash"],
             is_skull_stripped=val_result["is_skull_stripped"],
             status="VALIDATED",
@@ -128,6 +134,7 @@ async def validate_study(
             "run_id": run_id,
             "status": "VALIDATED",
             "is_skull_stripped": val_result["is_skull_stripped"],
+            "dataset": {"profile": dataset_profile, "case_id": (case_id.strip() if case_id and case_id.strip() else None), "declared_source": (source_reference.strip() if source_reference and source_reference.strip() else DATASET_SOURCES.get(dataset_profile))},
             "hash": val_result["combined_hash"],
         }
     except ValidationError as exc:
@@ -213,7 +220,7 @@ def run_segmentation(run_id: str, db: Session = Depends(get_db)):
             volumes=volumes,
             metrics=metrics,
             output_pdf_path=pdf_path,
-            model_name="MONAI SegResNet; checkpoint configured via NEUROSCOPE_MODEL_WEIGHTS",
+            model_name=f"MONAI SegResNet bundle {MODEL_BUNDLE_VERSION} (trained on {MODEL_TRAINING_DATASET}); checkpoint configured via NEUROSCOPE_MODEL_WEIGHTS",
             inference_time=elapsed_time,
         )
         study_rec.status = "COMPLETED"
@@ -221,6 +228,8 @@ def run_segmentation(run_id: str, db: Session = Depends(get_db)):
         return {
             "run_id": run_id,
             "status": "COMPLETED",
+            "dataset": {"profile": study_rec.dataset_profile, "case_id": study_rec.case_id, "declared_source": study_rec.source_reference},
+            "model": {"bundle_source": MODEL_BUNDLE_SOURCE, "bundle_version": MODEL_BUNDLE_VERSION, "training_dataset": MODEL_TRAINING_DATASET},
             "inference_time_seconds": elapsed_time,
             "volumes": volumes,
             "metrics": metrics,
