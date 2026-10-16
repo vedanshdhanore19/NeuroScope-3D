@@ -46,13 +46,30 @@ def startup_event():
     init_db()
 
 
+@app.get("/health/model")
+def model_health():
+    """Actually load the configured checkpoint before claiming the model is ready."""
+    from app.inference import load_monai_model
+    try:
+        load_monai_model()
+        return {"ready": True, "checkpoint": "loaded_and_architecture_verified"}
+    except RuntimeError as exc:
+        return {"ready": False, "reason": str(exc)}
+
+
 @app.get("/")
 def read_root():
     return {
         "status": "online",
         "service": "NeuroScope 3D Engine",
         "disclaimer": DISCLAIMER_TEXT,
-        "model_ready": bool(os.getenv("NEUROSCOPE_MODEL_WEIGHTS", "").strip()),
+        "model_checkpoint_configured": bool(os.getenv("NEUROSCOPE_MODEL_WEIGHTS", "").strip()),
+        "model_checkpoint_file_present": bool(
+            os.getenv("NEUROSCOPE_MODEL_WEIGHTS", "").strip()
+            and os.path.isfile(os.path.expanduser(os.getenv("NEUROSCOPE_MODEL_WEIGHTS", "").strip()))
+        ),
+        "dataset_profile": DATASET_PROFILE,
+        "model_bundle_source": MODEL_BUNDLE_SOURCE,
     }
 
 
