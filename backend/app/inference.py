@@ -52,10 +52,13 @@ def load_monai_model():
         ).to(_DEVICE)
 
         checkpoint = torch.load(str(checkpoint_path), map_location=_DEVICE)
-        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-            state_dict = checkpoint["state_dict"]
-        elif isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-            state_dict = checkpoint["model_state_dict"]
+        if isinstance(checkpoint, dict):
+            # MONAI bundle checkpoints commonly wrap weights under "model".
+            state_dict = next(
+                (checkpoint[key] for key in ("state_dict", "model_state_dict", "model", "network")
+                 if key in checkpoint and isinstance(checkpoint[key], dict)),
+                checkpoint,
+            )
         else:
             state_dict = checkpoint
 
@@ -103,6 +106,12 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
 
     images = {key: nib.load(file_paths[key]) for key in ("t1gd", "t1", "t2", "flair")}
     ref_img = images["t1"]
+    ref_zooms = tuple(float(value) for value in ref_img.header.get_zooms()[:3])
+    if not np.allclose(ref_zooms, (1.0, 1.0, 1.0), atol=1e-2):
+        raise ValueError(
+            "MONAI bundle expects 1 mm isotropic inputs; received "
+            f"{ref_zooms}. Resampling is not performed automatically."
+        )
     ref_shape = ref_img.shape
     for key, img in images.items():
         if img.shape != ref_shape or not np.allclose(img.affine, ref_img.affine, atol=1e-3):
@@ -129,12 +138,23 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
     with torch.no_grad():
         output_logits = sliding_window_inference(
             inputs=input_tensor,
-            roi_size=(128, 128, 128),
-            sw_batch_size=2,
+            roi_size=(240, 240, 160),
+            sw_batch_size=1,
             predictor=model,
             overlap=0.5,
         )
         probs = torch.sigmoid(output_logits).squeeze(0).cpu().numpy()
+
+    if probs.ndim != 4 or probs.shape[0] != 3:
+        raise RuntimeError(
+            "Expected MONAI bundle output with 3 segmentation channels; received "
+            + str(probs.shape)
+        )
+    if tuple(probs.shape[1:]) != tuple(ref_img.shape):
+        raise RuntimeError(
+            "Prediction shape " + str(probs.shape[1:])
+            + " does not match input shape " + str(ref_img.shape)
+        )
 
     tc_mask = probs[0] > 0.5
     wt_mask = probs[1] > 0.5
