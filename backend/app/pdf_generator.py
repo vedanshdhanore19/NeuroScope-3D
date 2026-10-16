@@ -19,6 +19,9 @@ def generate_pdf_report(
     output_pdf_path: str = "report.pdf",
     model_name: str = "Model provenance not configured",
     inference_time: float = 0.0,
+    dataset_profile: Optional[str] = None,
+    case_id: Optional[str] = None,
+    source_reference: Optional[str] = None,
 ):
     """Generate a report; caller must pass verified model provenance."""
     doc = SimpleDocTemplate(
@@ -61,7 +64,10 @@ def generate_pdf_report(
     ]
     provenance_data = [
         ["Study ID", study_id],
-        ["Combined Data SHA-256", sha256_hash[:32] + "..."],
+        ["Dataset Profile", dataset_profile or "Not recorded"],
+        ["Official Case ID", case_id or "Not provided"],
+        ["Declared Data Source", source_reference or "Not recorded"],
+        ["Combined Data SHA-256", sha256_hash],
         ["Model Architecture / Checkpoint", model_name],
         ["Inference Time", f"{inference_time:.2f} seconds"],
         ["Performance Target", "Not independently benchmarked by this report generator"],
