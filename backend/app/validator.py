@@ -78,10 +78,15 @@ def check_skull_stripped(data: np.ndarray) -> bool:
     ])
     if border_voxels.size == 0:
         return False
-    return np.count_nonzero(border_voxels) / float(border_voxels.size) < 0.05
+    return bool(np.count_nonzero(border_voxels) / float(border_voxels.size) < 0.05)
 
 
-def validate_expert_mask(mask_path: str, reference_img: nib.Nifti1Image) -> np.ndarray:
+from .dataset_profiles import convert_msd_labels_to_brats, MSD_TO_BRATS_LABEL_MAP, BRATS_ALLOWED_LABELS
+
+
+def validate_expert_mask(
+    mask_path: str, reference_img: nib.Nifti1Image, dataset_profile: str = "brats"
+) -> np.ndarray:
     """Validate an optional expert label map against the reference MRI geometry."""
     mask_img, mask_data, mask_affine, _ = validate_single_nifti(mask_path)
     if mask_data.shape != reference_img.shape:
@@ -94,14 +99,58 @@ def validate_expert_mask(mask_path: str, reference_img: nib.Nifti1Image) -> np.n
             "EXPERT_MASK_AFFINE_MISMATCH",
             "Expert mask spatial affine does not match the reference MRI."
         )
-    labels = np.unique(mask_data)
-    allowed = np.array([0, 1, 2, 4])
-    if not np.all(np.isin(labels, allowed)):
+
+    labels = set(np.unique(mask_data.astype(int)))
+    if dataset_profile == "msd_task01":
+        allowed_msd = set(MSD_TO_BRATS_LABEL_MAP.keys())
+        if not labels.issubset(allowed_msd):
+            unsupported = sorted(list(labels - allowed_msd))
+            raise ValidationError(
+                "EXPERT_MASK_INVALID_LABELS",
+                f"MSD Task01 mask contains unsupported labels: {unsupported} (allowed: 0, 1, 2, 3)."
+            )
+        return convert_msd_labels_to_brats(mask_data)
+
+    # Standard BraTS label profile: 0=bg, 1=NCR, 2=ED, 4=ET
+    if not labels.issubset(BRATS_ALLOWED_LABELS):
+        unsupported = sorted(list(labels - BRATS_ALLOWED_LABELS))
         raise ValidationError(
             "EXPERT_MASK_INVALID_LABELS",
-            f"Expert mask contains unsupported labels: {labels[~np.isin(labels, allowed)][:10].tolist()}."
+            f"BraTS expert mask contains unsupported labels: {unsupported} (allowed: 0, 1, 2, 4)."
         )
     return mask_data.astype(np.int16)
+
+
+def validate_msd_4d_nifti(file_path: str) -> Tuple[nib.Nifti1Image, np.ndarray, np.ndarray, Tuple[float, ...]]:
+    """Validate an MSD 4D brain volume (expected shape [H, W, D, 4])."""
+    check_file_size(file_path)
+    try:
+        img = nib.load(file_path)
+        data = img.get_fdata(dtype=np.float32)
+    except Exception as exc:
+        raise ValidationError(
+            code="CORRUPT_NIFTI",
+            message=f"Could not parse MSD 4D NIfTI file: {exc}"
+        ) from exc
+
+    if data.ndim != 4 or data.shape[3] != 4:
+        raise ValidationError(
+            code="UNSUPPORTED_DIMENSIONS",
+            message=f"Expected a 4D volume with 4 modalities (shape [X, Y, Z, 4]); received shape {data.shape}."
+        )
+    if not np.all(np.isfinite(data)):
+        raise ValidationError("NONFINITE_VALUES", "Volume contains NaN or infinite values.")
+    if np.all(data == 0) or float(np.std(data)) == 0:
+        raise ValidationError("CONSTANT_VOLUME", "Volume is constant or contains only zero voxels.")
+
+    affine = np.asarray(img.affine)
+    zooms = img.header.get_zooms()[:3]
+    if not np.all(np.isfinite(affine)) or abs(float(np.linalg.det(affine[:3, :3]))) < 1e-8:
+        raise ValidationError("INVALID_AFFINE", "NIfTI spatial affine is invalid or singular.")
+    if len(zooms) != 3 or not np.all(np.isfinite(zooms)) or any(float(z) <= 0 for z in zooms):
+        raise ValidationError("INVALID_SPACING", "Voxel spacing must contain three positive finite values.")
+
+    return img, data, affine, zooms
 
 
 def validate_study_set(file_paths: Dict[str, str]) -> Dict[str, object]:

@@ -12,36 +12,98 @@ import nibabel as nib
 import numpy as np
 import torch
 
-from .config import LABEL_ED, LABEL_ET, LABEL_NCR
+import hashlib
+import os
+import time
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+
+import nibabel as nib
+import numpy as np
+import torch
+
+from .config import BASE_DIR, LABEL_ED, LABEL_ET, LABEL_NCR
 
 _MODEL_CACHE = None
 _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_WEIGHTS_PATH = os.getenv("NEUROSCOPE_MODEL_WEIGHTS", "").strip()
+
+DEFAULT_BUNDLE_WEIGHTS = (
+    BASE_DIR
+    / "app"
+    / "models"
+    / "brats_mri_segmentation"
+    / "brats_mri_segmentation"
+    / "models"
+    / "model.pt"
+)
 
 
-def load_monai_model():
-    """Load SegResNet weights from NEUROSCOPE_MODEL_WEIGHTS or fail safely."""
+def resolve_model_checkpoint_path() -> Optional[Path]:
+    """Resolve the checkpoint path from environment variable or bundled weights."""
+    env_path = os.getenv("NEUROSCOPE_MODEL_WEIGHTS", "").strip()
+    if env_path:
+        p = Path(env_path).expanduser()
+        if p.is_file():
+            return p
+    if DEFAULT_BUNDLE_WEIGHTS.is_file():
+        return DEFAULT_BUNDLE_WEIGHTS
+    return None
+
+
+def get_model_status() -> Dict[str, object]:
+    """Detailed model status differentiating configuration, file availability, and loading."""
+    configured_path = os.getenv("NEUROSCOPE_MODEL_WEIGHTS", "").strip()
+    resolved = resolve_model_checkpoint_path()
+    file_exists = resolved is not None and resolved.is_file()
+
+    sha256 = None
+    if file_exists:
+        try:
+            h = hashlib.sha256()
+            with open(resolved, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            sha256 = h.hexdigest()
+        except Exception:
+            sha256 = "unreadable"
+
+    return {
+        "service_online": True,
+        "model_configured": bool(configured_path or (resolved and resolved.is_file())),
+        "checkpoint_path": str(resolved) if resolved else (configured_path or None),
+        "checkpoint_exists": file_exists,
+        "checkpoint_sha256": sha256,
+        "model_loaded": _MODEL_CACHE is not None,
+        "ready_for_inference": file_exists,
+        "bundle_name": "brats_mri_segmentation",
+        "bundle_version": "0.5.4",
+        "architecture": "SegResNet",
+        "device": str(_DEVICE),
+        "input_channels": 4,
+        "channel_order": ["t1gd (T1c)", "t1", "t2", "flair"],
+        "output_channels": 3,
+        "output_classes": ["TC (Tumor Core)", "WT (Whole Tumor)", "ET (Enhancing Tumor)"],
+    }
+
+
+def load_monai_model(force_reload: bool = False):
+    """Load SegResNet weights from resolved checkpoint or fail safely."""
     global _MODEL_CACHE
-    if _MODEL_CACHE is not None:
+    if _MODEL_CACHE is not None and not force_reload:
         return _MODEL_CACHE
 
-    if not MODEL_WEIGHTS_PATH:
+    checkpoint_path = resolve_model_checkpoint_path()
+    if checkpoint_path is None or not checkpoint_path.is_file():
         raise RuntimeError(
-            "Trained model weights are not configured. Set NEUROSCOPE_MODEL_WEIGHTS "
-            "to a verified compatible checkpoint before running segmentation. "
-            "No prediction was generated."
-        )
-
-    checkpoint_path = Path(MODEL_WEIGHTS_PATH).expanduser()
-    if not checkpoint_path.is_file():
-        raise RuntimeError(
-            f"Configured model checkpoint does not exist: {checkpoint_path}. "
-            "No prediction was generated."
+            "Trained model weights are not available. Set NEUROSCOPE_MODEL_WEIGHTS "
+            "to a verified compatible checkpoint or ensure the official MONAI bundle "
+            "model.pt is present. No prediction was generated."
         )
 
     try:
         from monai.networks.nets import SegResNet
 
+        # Matches official MONAI brats_mri_segmentation v0.5.4 configs
         model = SegResNet(
             spatial_dims=3,
             in_channels=4,
@@ -49,6 +111,7 @@ def load_monai_model():
             init_filters=16,
             blocks_down=[1, 2, 2, 4],
             blocks_up=[1, 1, 1],
+            dropout_prob=0.2,
         ).to(_DEVICE)
 
         checkpoint = torch.load(str(checkpoint_path), map_location=_DEVICE)
@@ -62,7 +125,7 @@ def load_monai_model():
         if not isinstance(state_dict, dict):
             raise ValueError("Checkpoint does not contain a state dictionary.")
 
-        # Support checkpoints saved from a wrapped model (e.g. DataParallel).
+        # Strip 'module.' prefix if model was saved using DistributedDataParallel / DataParallel
         state_dict = {
             key.removeprefix("module."): value
             for key, value in state_dict.items()
@@ -73,7 +136,7 @@ def load_monai_model():
         return model
     except Exception as exc:
         raise RuntimeError(
-            "Could not load the configured checkpoint into the expected SegResNet "
+            "Could not load the configured checkpoint into the SegResNet "
             f"architecture. Confirm its architecture and label conventions. Details: {exc}"
         ) from exc
 
@@ -89,16 +152,15 @@ def convert_nested_masks_to_brats_codes(
     et_mask = np.asarray(et_mask, dtype=bool) & tc_mask
 
     brats_map = np.zeros(wt_mask.shape, dtype=np.int16)
-    brats_map[wt_mask & ~tc_mask] = LABEL_ED
-    brats_map[tc_mask & ~et_mask] = LABEL_NCR
-    brats_map[et_mask] = LABEL_ET
+    brats_map[wt_mask & ~tc_mask] = LABEL_ED   # 2: Peritumoral edema
+    brats_map[tc_mask & ~et_mask] = LABEL_NCR  # 1: Necrotic & non-enhancing tumor core
+    brats_map[et_mask] = LABEL_ET             # 4: Enhancing tumor
     return brats_map
 
 
 def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np.ndarray, float]:
     """Run inference only with a successfully loaded trained checkpoint."""
     start_time = time.time()
-    # Fail before loading large MRI volumes if model weights are not configured.
     model = load_monai_model()
 
     images = {key: nib.load(file_paths[key]) for key in ("t1gd", "t1", "t2", "flair")}
@@ -112,13 +174,17 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
         key: img.get_fdata(dtype=np.float32)
         for key, img in images.items()
     }
+
+    # Normalize intensity: nonzero=True, channel_wise=True per MONAI bundle specification
     for data in data_arrays.values():
         mask = data > 0
         if np.any(mask):
-            mean = np.mean(data[mask])
-            std = np.std(data[mask])
+            mean = float(np.mean(data[mask]))
+            std = float(np.std(data[mask]))
             data[mask] = (data[mask] - mean) / (std + 1e-8)
 
+    # 4-channel input order according to bundle metadata.json:
+    # 0: T1c (t1gd), 1: T1, 2: T2, 3: FLAIR
     input_tensor = np.stack(
         [data_arrays[key] for key in ("t1gd", "t1", "t2", "flair")], axis=0
     )
@@ -126,11 +192,20 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
 
     from monai.inferers import sliding_window_inference
 
+    # Adapt roi_size to input shape; ensure each dimension is divisible by 8 (for 3-level SegResNet downsampling)
+    spatial_shape = input_tensor.shape[2:]
+    roi_size = (
+        min(240, spatial_shape[0]),
+        min(240, spatial_shape[1]),
+        min(160, spatial_shape[2]),
+    )
+    roi_size = tuple(max(16, (int(d) // 8) * 8) for d in roi_size)
+
     with torch.no_grad():
         output_logits = sliding_window_inference(
             inputs=input_tensor,
-            roi_size=(128, 128, 128),
-            sw_batch_size=2,
+            roi_size=roi_size,
+            sw_batch_size=1,
             predictor=model,
             overlap=0.5,
         )
@@ -141,7 +216,10 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
     et_mask = probs[2] > 0.5
     pred_label_map = convert_nested_masks_to_brats_codes(tc_mask, wt_mask, et_mask)
 
-    output_nifti = nib.Nifti1Image(pred_label_map, affine=ref_img.affine, header=ref_img.header)
+    # Ensure output header specifies int16 datatype for correct medical viewer interpretation
+    output_header = ref_img.header.copy()
+    output_header.set_data_dtype(np.int16)
+    output_nifti = nib.Nifti1Image(pred_label_map, affine=ref_img.affine, header=output_header)
     nib.save(output_nifti, output_save_path)
 
     return pred_label_map, round(time.time() - start_time, 2)
