@@ -239,6 +239,9 @@ def run_segmentation(run_id: str, db: Session = Depends(get_db)):
             output_pdf_path=pdf_path,
             model_name=f"MONAI SegResNet bundle {MODEL_BUNDLE_VERSION} (trained on {MODEL_TRAINING_DATASET}); checkpoint configured via NEUROSCOPE_MODEL_WEIGHTS",
             inference_time=elapsed_time,
+            dataset_profile=study_rec.dataset_profile,
+            case_id=study_rec.case_id,
+            source_reference=study_rec.source_reference,
         )
         study_rec.status = "COMPLETED"
         db.commit()
