@@ -1,44 +1,84 @@
 # NeuroScope 3D
 
-NeuroScope 3D is a research and teaching prototype for brain MRI study validation, tumor-segmentation workflows, region volumetrics, optional comparison with an expert reference mask, and PDF reporting.
+NeuroScope 3D is a research/education prototype for validating multimodal brain MRI, running tumor-subregion segmentation with a configured MONAI checkpoint, calculating physical volumes, optionally evaluating against an expert reference mask, and generating a provenance-oriented PDF report.
 
-> **Important safety notice:** This project is not a medical device and must not be used for diagnosis, treatment planning, or clinical decision-making. Outputs must be independently reviewed by qualified professionals.
+> **Safety:** Not a medical device. Not for diagnosis, treatment planning, or clinical decision-making. Outputs require independent expert review.
 
-## Current repository status
+## Official data sources and roles
 
-The tracked implementation contains a FastAPI backend with four-sequence NIfTI validation (T1, T1Gd/T1ce, T2, FLAIR), a MONAI SegResNet inference implementation, tumor-region volumetric calculations, optional expert-mask metrics, SQLite-backed records, and PDF report generation.
+| Resource | Role in this project | Important limitation |
+|---|---|---|
+| [BraTS 2021](https://www.med.upenn.edu/cbica/brats2021/) | Primary challenge dataset and organizer-provided 40-case development subset, if this is the subset issued to your team | Access terms and case identifiers must be retained; do not redistribute restricted data |
+| [Medical Segmentation Decathlon — Task01 BrainTumour](http://medicaldecathlon.com/) | Optional, separate dataset profile for cases explicitly sourced from MSD | Label encoding differs and must be mapped using the selected profile |
+| [MONAI Model Zoo — brats_mri_segmentation](https://github.com/Project-MONAI/model-zoo/tree/dev/models/brats_mri_segmentation) | Pretrained segmentation bundle/checkpoint source | The documented bundle was trained on **BraTS 2018**, not BraTS 2021; this is not proof of performance on the official development subset |
 
-A frontend is not currently present in the tracked `main` branch.
+The application does **not** generate random MRI scans or fake predictions. Synthetic arrays may be used only in unit tests and must never be shown as clinical images or model output. If the configured checkpoint is missing or incompatible, segmentation must fail rather than return a fabricated result.
 
-### Important model limitation
+## Dataset profile configuration
 
-The inference implementation constructs a SegResNet model but does not load a trained checkpoint. Its outputs **must not be treated as valid tumor segmentations**. The report generator currently labels the model as pretrained; that claim must be corrected or backed by verified checkpoint provenance before reports are used.
+Set `NEUROSCOPE_DATASET_PROFILE` to one of:
 
-## Planned milestones
+- `brats2021` (default): canonical BraTS labels 0=background, 1=NCR/NET, 2=edema, 4=ET; expects the preprocessed 240 × 240 × 155 geometry and 1 mm isotropic spacing used by the supplied data description.
+- `msd_task01`: explicitly sourced MSD Task01 labels are converted from 0=background, 1=edema, 2=NCR/NET, 3=ET into the canonical internal labels 0, 2, 1, 4. This profile does not make MSD cases equivalent to BraTS 2021.
 
-1. **Audit and harden the backend:** correct input-validation issues, verify expert-mask alignment and label conventions, add clear API errors, and add automated tests.
-2. **Integrate a verified trained model:** document its source, license, architecture, expected preprocessing, label mapping, and limitations; refuse inference when weights are unavailable.
-3. **Build the frontend:** modality upload, validation state, slice viewer, segmentation overlays, volumetric results, and report download.
-4. **Add 3D visualization:** render segmentation masks and connect the 3D view to 2D MRI slices.
-5. **Validate and document:** test with known cases and reference masks, document reproducible setup, and deploy only after the workflow passes testing.
+Do not silently resize or resample data to pass validation. If official cases differ from the expected geometry, confirm the organizer's preprocessing instructions and implement a documented, tested transform first.
+
+## Uploading the supplied MSD Task01_BrainTumour data
+
+The Medical Segmentation Decathlon archive stores each case as a **single 4D NIfTI image** with four modalities along its fourth dimension, plus a 3D label map for labeled cases. The API route `POST /api/v1/validate/msd-task01` accepts:
+- `image`: one case NIfTI file (for example, a file from `imagesTr`)
+- `dataset_json`: the official `dataset.json` from the extracted Task01_BrainTumour archive
+- `expert_mask` (optional): the matching label file from `labelsTr`
+- `case_id` (optional): the case identifier
+
+The endpoint reads the channel order from `dataset.json`, maps the named modalities to the internal T1, T1Gd/T1ce, T2, and FLAIR keys, and splits the 4D image into temporary 3D volumes for validation/inference. It rejects missing, duplicate, or unknown modality names rather than assuming a channel order. The optional expert mask uses MSD's source labels and is converted to the internal BraTS label convention for evaluation.
+
+Do not upload the whole 7 GB archive to the API. Extract it locally, then upload one case file, the archive's `dataset.json`, and (if evaluating) that case's matching label file. The `dataset.json` and label file must come from the same dataset release as the case. The API's source field is provenance metadata, not independent verification of authenticity.
+
+## Model input and limits
+
+The MONAI bundle documents four aligned MRI channels in this order: **T1Gd/T1c, T1, T2, FLAIR**, at 1 mm isotropic spacing. The upload API accepts each modality separately and the inference module explicitly stacks channels in the bundle's expected order.
+
+The bundle documentation reports training/validation results on its own BraTS 2018 split. Those numbers are **not** NeuroScope's measured results and must not be presented as evaluation on BraTS 2021. Run evaluation only where an official expert mask is available and geometrically aligned.
+
+The model checkpoint path is configured with `NEUROSCOPE_MODEL_WEIGHTS`. The file must be downloaded from an authorized source and verified to match the expected MONAI architecture. Check `GET /health/model` to attempt loading the checkpoint and verify compatibility; a configured path alone is not proof of readiness.
 
 ## Backend setup
 
-From the `backend` directory, create and activate a Python virtual environment, install dependencies, then start the API:
+Run these commands from the `backend` directory:
 
-```bash
+```powershell
 python -m venv .venv
-# Windows PowerShell:
-.venv\\Scripts\\Activate.ps1
-# macOS/Linux:
-# source .venv/bin/activate
-
-pip install -r requirements.txt
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+$env:NEUROSCOPE_DATASET_PROFILE = "brats2021"
+$env:NEUROSCOPE_MODEL_WEIGHTS = "C:\path\to\verified\model.pt"
 uvicorn main:app --reload
 ```
 
-Run the server from the `backend` directory as shown above. Interactive API documentation is normally available at `/docs` on the local server.
+API documentation: `http://127.0.0.1:8000/docs`
 
-## Data and privacy
+Useful endpoints:
 
-MRI data can contain sensitive health information. Use only appropriately authorized, de-identified data for development. Do not commit patient scans, model checkpoints without confirming their license, secrets, database files, or generated reports to version control.
+- `GET /`: API status and configured data/model metadata
+- `GET /health/model`: attempts to load the configured checkpoint
+- `POST /api/v1/validate`: validate four modality files and optional expert mask
+- `POST /api/v1/segment/{run_id}`: run segmentation for a validated study
+- `GET /api/v1/jobs/{run_id}/prediction`: download the predicted NIfTI mask
+- `GET /api/v1/jobs/{run_id}/report`: download the generated PDF
+
+The validation form accepts `dataset_profile`, optional `case_id`, and optional `source_reference`. These are provenance fields supplied by the caller; they are not independent proof that a file came from an official source. SHA-256 hashes are recorded for uploaded MRI modalities.
+
+## Tests and CI
+
+Run tests from the repository root:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+GitHub Actions runs the test suite on pushes to the development branch and on pull requests targeting it. CI checks are not a substitute for a real end-to-end run on an authorized official case and the actual model checkpoint.
+
+## Privacy and licensing
+
+Use only data your team is authorized to process. Do not commit patient scans, local databases, secrets, generated reports, or restricted dataset files. Confirm the terms for both the official dataset and the model checkpoint before redistribution or deployment.

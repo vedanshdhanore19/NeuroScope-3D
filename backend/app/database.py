@@ -44,6 +44,9 @@ class Study(Base):
     t2_filename = Column(String(255), nullable=False)
     flair_filename = Column(String(255), nullable=False)
     expert_mask_filename = Column(String(255), nullable=True)
+    dataset_profile = Column(String(40), nullable=False, default="brats2021")
+    case_id = Column(String(255), nullable=True)
+    source_reference = Column(Text, nullable=True)
 
     sha256_hash = Column(String(64), nullable=False)
     is_skull_stripped = Column(Boolean, default=True)
@@ -117,8 +120,22 @@ class FailureLog(Base):
 
 
 def init_db():
-    """Initializes SQLite tables."""
+    """Initialize tables and add provenance columns to existing SQLite databases."""
     Base.metadata.create_all(bind=engine)
+    # create_all does not alter existing tables; keep upgrades backward-compatible.
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "studies" in inspector.get_table_names():
+        existing = {column["name"] for column in inspector.get_columns("studies")}
+        migrations = {
+            "dataset_profile": "ALTER TABLE studies ADD COLUMN dataset_profile VARCHAR(40) NOT NULL DEFAULT 'brats2021'",
+            "case_id": "ALTER TABLE studies ADD COLUMN case_id VARCHAR(255)",
+            "source_reference": "ALTER TABLE studies ADD COLUMN source_reference TEXT",
+        }
+        with engine.begin() as connection:
+            for name, statement in migrations.items():
+                if name not in existing:
+                    connection.execute(text(statement))
 
 
 def get_db():

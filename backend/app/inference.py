@@ -52,10 +52,13 @@ def load_monai_model():
         ).to(_DEVICE)
 
         checkpoint = torch.load(str(checkpoint_path), map_location=_DEVICE)
-        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-            state_dict = checkpoint["state_dict"]
-        elif isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-            state_dict = checkpoint["model_state_dict"]
+        if isinstance(checkpoint, dict):
+            # MONAI bundle checkpoints commonly wrap weights under "model".
+            state_dict = next(
+                (checkpoint[key] for key in ("state_dict", "model_state_dict", "model", "network")
+                 if key in checkpoint and isinstance(checkpoint[key], dict)),
+                checkpoint,
+            )
         else:
             state_dict = checkpoint
 
@@ -81,19 +84,23 @@ def load_monai_model():
 def convert_nested_masks_to_brats_codes(
     tc_mask: np.ndarray, wt_mask: np.ndarray, et_mask: np.ndarray
 ) -> np.ndarray:
-    """Convert TC, WT, ET masks into BraTS-style labels 1, 2, and 4."""
-    # Enforce the expected nesting so overlapping threshold outputs are resolved
-    # consistently: ET is a subset of TC, which is a subset of WT.
+    """Convert MONAI TC, WT, ET threshold masks to BraTS labels.
+
+    Matches the upstream MONAI bundle's precedence: ET (label 4), then TC
+    (label 1), then WT-only edema (label 2). Model threshold masks are not
+    assumed to be perfectly nested.
+    """
+    tc_mask = np.asarray(tc_mask, dtype=bool)
     wt_mask = np.asarray(wt_mask, dtype=bool)
-    tc_mask = np.asarray(tc_mask, dtype=bool) & wt_mask
-    et_mask = np.asarray(et_mask, dtype=bool) & tc_mask
+    et_mask = np.asarray(et_mask, dtype=bool)
+    if tc_mask.shape != wt_mask.shape or tc_mask.shape != et_mask.shape:
+        raise ValueError("TC, WT, and ET masks must have identical shapes.")
 
     brats_map = np.zeros(wt_mask.shape, dtype=np.int16)
-    brats_map[wt_mask & ~tc_mask] = LABEL_ED
-    brats_map[tc_mask & ~et_mask] = LABEL_NCR
+    brats_map[wt_mask] = LABEL_ED
+    brats_map[tc_mask] = LABEL_NCR
     brats_map[et_mask] = LABEL_ET
     return brats_map
-
 
 def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np.ndarray, float]:
     """Run inference only with a successfully loaded trained checkpoint."""
@@ -103,6 +110,12 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
 
     images = {key: nib.load(file_paths[key]) for key in ("t1gd", "t1", "t2", "flair")}
     ref_img = images["t1"]
+    ref_zooms = tuple(float(value) for value in ref_img.header.get_zooms()[:3])
+    if not np.allclose(ref_zooms, (1.0, 1.0, 1.0), atol=1e-2):
+        raise ValueError(
+            "MONAI bundle expects 1 mm isotropic inputs; received "
+            f"{ref_zooms}. Resampling is not performed automatically."
+        )
     ref_shape = ref_img.shape
     for key, img in images.items():
         if img.shape != ref_shape or not np.allclose(img.affine, ref_img.affine, atol=1e-3):
@@ -129,12 +142,23 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
     with torch.no_grad():
         output_logits = sliding_window_inference(
             inputs=input_tensor,
-            roi_size=(128, 128, 128),
-            sw_batch_size=2,
+            roi_size=(240, 240, 160),
+            sw_batch_size=1,
             predictor=model,
             overlap=0.5,
         )
         probs = torch.sigmoid(output_logits).squeeze(0).cpu().numpy()
+
+    if probs.ndim != 4 or probs.shape[0] != 3:
+        raise RuntimeError(
+            "Expected MONAI bundle output with 3 segmentation channels; received "
+            + str(probs.shape)
+        )
+    if tuple(probs.shape[1:]) != tuple(ref_img.shape):
+        raise RuntimeError(
+            "Prediction shape " + str(probs.shape[1:])
+            + " does not match input shape " + str(ref_img.shape)
+        )
 
     tc_mask = probs[0] > 0.5
     wt_mask = probs[1] > 0.5
