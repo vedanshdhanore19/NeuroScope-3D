@@ -23,6 +23,18 @@ Set `NEUROSCOPE_DATASET_PROFILE` to one of:
 
 Do not silently resize or resample data to pass validation. If official cases differ from the expected geometry, confirm the organizer's preprocessing instructions and implement a documented, tested transform first.
 
+## Uploading the supplied MSD Task01_BrainTumour data
+
+The Medical Segmentation Decathlon archive stores each case as a **single 4D NIfTI image** with four modalities along its fourth dimension, plus a 3D label map for labeled cases. The API route `POST /api/v1/validate/msd-task01` accepts:
+- `image`: one case NIfTI file (for example, a file from `imagesTr`)
+- `dataset_json`: the official `dataset.json` from the extracted Task01_BrainTumour archive
+- `expert_mask` (optional): the matching label file from `labelsTr`
+- `case_id` (optional): the case identifier
+
+The endpoint reads the channel order from `dataset.json`, maps the named modalities to the internal T1, T1Gd/T1ce, T2, and FLAIR keys, and splits the 4D image into temporary 3D volumes for validation/inference. It rejects missing, duplicate, or unknown modality names rather than assuming a channel order. The optional expert mask uses MSD's source labels and is converted to the internal BraTS label convention for evaluation.
+
+Do not upload the whole 7 GB archive to the API. Extract it locally, then upload one case file, the archive's `dataset.json`, and (if evaluating) that case's matching label file. The `dataset.json` and label file must come from the same dataset release as the case. The API's source field is provenance metadata, not independent verification of authenticity.
+
 ## Model input and limits
 
 The MONAI bundle documents four aligned MRI channels in this order: **T1Gd/T1c, T1, T2, FLAIR**, at 1 mm isotropic spacing. The upload API accepts each modality separately and the inference module explicitly stacks channels in the bundle's expected order.
