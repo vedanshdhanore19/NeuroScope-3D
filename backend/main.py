@@ -218,7 +218,7 @@ def run_segmentation(run_id: str, db: Session = Depends(get_db)):
         metrics = None
         expert_path = run_temp_dir / "expert.nii.gz"
         if expert_path.exists():
-            expert_data = validate_expert_mask(str(expert_path), t1_img)
+            expert_data = validate_expert_mask(str(expert_path), t1_img, dataset_profile=study_rec.dataset_profile)
             metrics = evaluate_against_expert_mask(pred_label_map, expert_data, spacing=zooms)
             for region, values in metrics.items():
                 db.add(EvaluationMetric(
