@@ -1,10 +1,13 @@
-"""
-MONAI Model Inference Engine for NeuroScope 3D.
-Runs SegResNet inference on T1Gd, T1, T2, FLAIR modalities and remaps outputs to BraTS codes.
-"""
+"""MONAI inference engine for NeuroScope 3D.
 
+Inference is disabled unless a trained checkpoint is explicitly configured.
+A randomly initialized network must never be presented as a tumor segmentation.
+"""
+import os
 import time
+from pathlib import Path
 from typing import Dict, Tuple
+
 import nibabel as nib
 import numpy as np
 import torch
@@ -13,16 +16,32 @@ from .config import LABEL_ED, LABEL_ET, LABEL_NCR
 
 _MODEL_CACHE = None
 _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+MODEL_WEIGHTS_PATH = os.getenv("NEUROSCOPE_MODEL_WEIGHTS", "").strip()
 
 
 def load_monai_model():
-    """Loads MONAI SegResNet pretrained model bundle."""
+    """Load SegResNet weights from NEUROSCOPE_MODEL_WEIGHTS or fail safely."""
     global _MODEL_CACHE
     if _MODEL_CACHE is not None:
         return _MODEL_CACHE
 
+    if not MODEL_WEIGHTS_PATH:
+        raise RuntimeError(
+            "Trained model weights are not configured. Set NEUROSCOPE_MODEL_WEIGHTS "
+            "to a verified compatible checkpoint before running segmentation. "
+            "No prediction was generated."
+        )
+
+    checkpoint_path = Path(MODEL_WEIGHTS_PATH).expanduser()
+    if not checkpoint_path.is_file():
+        raise RuntimeError(
+            f"Configured model checkpoint does not exist: {checkpoint_path}. "
+            "No prediction was generated."
+        )
+
     try:
         from monai.networks.nets import SegResNet
+
         model = SegResNet(
             spatial_dims=3,
             in_channels=4,
@@ -32,55 +51,79 @@ def load_monai_model():
             blocks_up=[1, 1, 1],
         ).to(_DEVICE)
 
+        checkpoint = torch.load(str(checkpoint_path), map_location=_DEVICE)
+        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        elif isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
+        else:
+            state_dict = checkpoint
+
+        if not isinstance(state_dict, dict):
+            raise ValueError("Checkpoint does not contain a state dictionary.")
+
+        # Support checkpoints saved from a wrapped model (e.g. DataParallel).
+        state_dict = {
+            key.removeprefix("module."): value
+            for key, value in state_dict.items()
+        }
+        model.load_state_dict(state_dict, strict=True)
         model.eval()
         _MODEL_CACHE = model
         return model
     except Exception as exc:
-        raise RuntimeError(f"Failed to initialize MONAI SegResNet model: {str(exc)}")
+        raise RuntimeError(
+            "Could not load the configured checkpoint into the expected SegResNet "
+            f"architecture. Confirm its architecture and label conventions. Details: {exc}"
+        ) from exc
 
 
-def convert_nested_masks_to_brats_codes(tc_mask: np.ndarray, wt_mask: np.ndarray, et_mask: np.ndarray) -> np.ndarray:
-    """Converts MONAI nested outputs (TC, WT, ET) into BraTS 2021 codes (1, 2, 4)."""
+def convert_nested_masks_to_brats_codes(
+    tc_mask: np.ndarray, wt_mask: np.ndarray, et_mask: np.ndarray
+) -> np.ndarray:
+    """Convert TC, WT, ET masks into BraTS-style labels 1, 2, and 4."""
+    # Enforce the expected nesting so overlapping threshold outputs are resolved
+    # consistently: ET is a subset of TC, which is a subset of WT.
+    wt_mask = np.asarray(wt_mask, dtype=bool)
+    tc_mask = np.asarray(tc_mask, dtype=bool) & wt_mask
+    et_mask = np.asarray(et_mask, dtype=bool) & tc_mask
+
     brats_map = np.zeros(wt_mask.shape, dtype=np.int16)
-
-    ncr_mask = np.logical_and(tc_mask, np.logical_not(et_mask))
-    ed_mask = np.logical_and(wt_mask, np.logical_not(tc_mask))
-
-    brats_map[ed_mask] = LABEL_ED    # 2
-    brats_map[ncr_mask] = LABEL_NCR  # 1
-    brats_map[et_mask] = LABEL_ET    # 4
-
+    brats_map[wt_mask & ~tc_mask] = LABEL_ED
+    brats_map[tc_mask & ~et_mask] = LABEL_NCR
+    brats_map[et_mask] = LABEL_ET
     return brats_map
 
 
 def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np.ndarray, float]:
-    """Executes end-to-end model inference."""
+    """Run inference only with a successfully loaded trained checkpoint."""
     start_time = time.time()
+    # Fail before loading large MRI volumes if model weights are not configured.
+    model = load_monai_model()
 
-    t1gd_img = nib.load(file_paths["t1gd"])
-    t1_img = nib.load(file_paths["t1"])
-    t2_img = nib.load(file_paths["t2"])
-    flair_img = nib.load(file_paths["flair"])
+    images = {key: nib.load(file_paths[key]) for key in ("t1gd", "t1", "t2", "flair")}
+    ref_img = images["t1"]
+    ref_shape = ref_img.shape
+    for key, img in images.items():
+        if img.shape != ref_shape or not np.allclose(img.affine, ref_img.affine, atol=1e-3):
+            raise ValueError(f"{key.upper()} image does not match T1 dimensions/affine.")
 
-    ref_affine = t1_img.affine
-    ref_header = t1_img.header
-
-    t1gd_data = t1gd_img.get_fdata(dtype=np.float32)
-    t1_data = t1_img.get_fdata(dtype=np.float32)
-    t2_data = t2_img.get_fdata(dtype=np.float32)
-    flair_data = flair_img.get_fdata(dtype=np.float32)
-
-    for data_arr in [t1gd_data, t1_data, t2_data, flair_data]:
-        mask = data_arr > 0
+    data_arrays = {
+        key: img.get_fdata(dtype=np.float32)
+        for key, img in images.items()
+    }
+    for data in data_arrays.values():
+        mask = data > 0
         if np.any(mask):
-            mean = np.mean(data_arr[mask])
-            std = np.std(data_arr[mask])
-            data_arr[mask] = (data_arr[mask] - mean) / (std + 1e-8)
+            mean = np.mean(data[mask])
+            std = np.std(data[mask])
+            data[mask] = (data[mask] - mean) / (std + 1e-8)
 
-    input_tensor = np.stack([t1gd_data, t1_data, t2_data, flair_data], axis=0)
+    input_tensor = np.stack(
+        [data_arrays[key] for key in ("t1gd", "t1", "t2", "flair")], axis=0
+    )
     input_tensor = torch.from_numpy(input_tensor).unsqueeze(0).to(_DEVICE)
 
-    model = load_monai_model()
     from monai.inferers import sliding_window_inference
 
     with torch.no_grad():
@@ -89,18 +132,16 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
             roi_size=(128, 128, 128),
             sw_batch_size=2,
             predictor=model,
-            overlap=0.5
+            overlap=0.5,
         )
         probs = torch.sigmoid(output_logits).squeeze(0).cpu().numpy()
 
     tc_mask = probs[0] > 0.5
     wt_mask = probs[1] > 0.5
     et_mask = probs[2] > 0.5
-
     pred_label_map = convert_nested_masks_to_brats_codes(tc_mask, wt_mask, et_mask)
 
-    output_nifti = nib.Nifti1Image(pred_label_map, affine=ref_affine, header=ref_header)
+    output_nifti = nib.Nifti1Image(pred_label_map, affine=ref_img.affine, header=ref_img.header)
     nib.save(output_nifti, output_save_path)
 
-    elapsed_time = round(time.time() - start_time, 2)
-    return pred_label_map, elapsed_time
+    return pred_label_map, round(time.time() - start_time, 2)
