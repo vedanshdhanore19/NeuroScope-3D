@@ -1,45 +1,59 @@
+@import '@fontsource-variable/inter';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --bg-main: #0A0E17;
+    --surface-main: #0F1623;
+    --surface-elevated: #151D2C;
+    --border-subtle: rgba(255, 255, 255, 0.08);
+  }
+
   body {
-    @apply bg-background text-slate-100 antialiased selection:bg-cyan-500/30 selection:text-cyan-200 overflow-x-hidden;
+    @apply bg-background text-slate-100 antialiased selection:bg-cyan-500/25 selection:text-cyan-200 overflow-x-hidden font-sans;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 }
 
-/* Custom Scrollbar for Medical Viewer */
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0B0F17;
+  background: #0A0E17;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1F2937;
+  background: #1A2336;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #374151;
+  background: #25334D;
 }
 
-/* Glassmorphism Classes */
+/* Glass & Card Classes */
 .glass-panel {
-  background: rgba(17, 24, 39, 0.75);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: rgba(15, 22, 35, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.glass-panel-glow {
-  background: rgba(17, 24, 39, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(0, 240, 255, 0.25);
-  box-shadow: 0 0 30px rgba(0, 240, 255, 0.1);
+.glass-panel-hover {
+  transition: all 0.2s ease-in-out;
+}
+.glass-panel-hover:hover {
+  background: rgba(21, 29, 44, 0.9);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.workstation-card {
+  background: #0F1623;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }

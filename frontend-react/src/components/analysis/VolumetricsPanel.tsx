@@ -1,6 +1,7 @@
-import React from 'react';
 import { useStudyStore } from '../../store/studyStore';
 import { api } from '../../services/api';
+import { Button } from '../ui/Button';
+import { MetricCard } from '../ui/MetricCard';
 import {
   BarChart,
   Bar,
@@ -13,13 +14,10 @@ import {
 } from 'recharts';
 import {
   Download,
-  FileSpreadsheet,
   Activity,
-  Layers,
-  Sparkles,
   Award,
-  CheckCircle2,
-  FileDown
+  FileDown,
+  Info
 } from 'lucide-react';
 
 export function VolumetricsPanel() {
@@ -27,11 +25,11 @@ export function VolumetricsPanel() {
 
   if (!studyDetails || !studyDetails.has_prediction || !studyDetails.volumes) {
     return (
-      <div className="glass-panel p-8 rounded-xl border-slate-800 text-center">
-        <Activity className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-        <h4 className="text-sm font-semibold text-slate-300">Volumetric Data Pending</h4>
-        <p className="text-xs text-slate-500 mt-1">
-          Execute AI segmentation to compute subregion physical volumes and evaluation metrics.
+      <div className="bg-surface p-12 rounded-2xl border border-surface-border text-center shadow-card space-y-3">
+        <Activity className="w-12 h-12 text-slate-600 mx-auto" />
+        <h4 className="text-sm font-semibold text-slate-200">Volumetric Data Pending</h4>
+        <p className="text-xs text-slate-400 max-w-sm mx-auto">
+          Execute AI segmentation on an uploaded MRI study to compute physical volumes and evaluation metrics.
         </p>
       </div>
     );
@@ -39,7 +37,14 @@ export function VolumetricsPanel() {
 
   const { volumes, metrics } = studyDetails;
 
-  // Chart Data Preparation (Values converted to mL)
+  // Derived Equivalent Spherical Diameter: d = (6 * V_mm3 / pi)^(1/3) mm
+  // 1 mL = 1000 mm3
+  const wtVolume = volumes.WT || 0;
+  const derivedDiameter = wtVolume > 0
+    ? Math.cbrt((6 * (wtVolume * 1000)) / Math.PI)
+    : 0;
+
+  // Chart Data Preparation (Values in mL)
   const chartData = [
     {
       name: 'Whole Tumor (WT)',
@@ -77,37 +82,32 @@ export function VolumetricsPanel() {
     <div className="space-y-6">
       
       {/* Volumetrics Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {chartData.map((item) => (
-          <div
+          <MetricCard
             key={item.name}
-            className="glass-panel p-3.5 rounded-xl border-slate-800 flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center space-x-1.5 mb-1">
-                <span
-                  className="w-2.5 h-2.5 rounded-full"
-                  style={{ backgroundColor: item.color }}
-                />
-                <span className="text-[11px] font-semibold text-slate-300 truncate">
-                  {item.name.split(' ')[0]}
-                </span>
-              </div>
-              <p className="text-[10px] text-slate-500 line-clamp-1">{item.desc}</p>
-            </div>
-            <div className="mt-3">
-              <span className="text-xl font-bold font-mono text-white">
-                {item.volume}
-              </span>
-              <span className="text-xs font-mono text-slate-400 ml-1">mL</span>
-            </div>
-          </div>
+            label={item.name.split(' ')[0]}
+            value={item.volume}
+            unit="mL"
+            sublabel={item.desc}
+            color={item.color}
+          />
         ))}
+
+        {/* Derived Diameter Card */}
+        <MetricCard
+          label="Equiv. Diameter"
+          value={derivedDiameter.toFixed(1)}
+          unit="mm"
+          sublabel="Equivalent spherical"
+          color="#3B82F6"
+          tooltip="Derived spherical equivalent d = (6V/π)^(1/3) mm from WT volume. Not a measured caliper diameter."
+        />
       </div>
 
       {/* Recharts Bar Visualization */}
-      <div className="glass-panel p-5 rounded-2xl border-slate-800 space-y-4">
-        <div className="flex items-center justify-between">
+      <div className="bg-surface p-5 rounded-2xl border border-surface-border shadow-card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center space-x-2 text-cyan-400">
             <Activity className="w-4 h-4" />
             <h3 className="text-xs font-mono uppercase tracking-wider font-semibold">
@@ -122,16 +122,16 @@ export function VolumetricsPanel() {
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1F2937" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
               <XAxis
                 dataKey="name"
-                stroke="#6B7280"
+                stroke="#64748B"
                 fontSize={11}
                 tickLine={false}
                 interval={0}
               />
               <YAxis
-                stroke="#6B7280"
+                stroke="#64748B"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
@@ -139,11 +139,11 @@ export function VolumetricsPanel() {
               />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: '#111827',
-                  border: '1px solid #374151',
+                  backgroundColor: '#0F1623',
+                  border: '1px solid rgba(255,255,255,0.1)',
                   borderRadius: '8px',
                   fontSize: '12px',
-                  color: '#F3F4F6',
+                  color: '#F1F5F9',
                 }}
                 formatter={(val: any) => [`${val} mL`, 'Physical Volume']}
               />
@@ -157,9 +157,9 @@ export function VolumetricsPanel() {
         </div>
       </div>
 
-      {/* Model Evaluation Metrics (If ground truth expert mask was uploaded) */}
+      {/* Model Evaluation Metrics (Ground-truth validation) */}
       {metrics ? (
-        <div className="glass-panel p-5 rounded-2xl border-slate-800 space-y-3">
+        <div className="bg-surface p-5 rounded-2xl border border-surface-border shadow-card space-y-3">
           <div className="flex items-center space-x-2 text-emerald-400">
             <Award className="w-4 h-4" />
             <h3 className="text-xs font-mono uppercase tracking-wider font-semibold">
@@ -169,23 +169,33 @@ export function VolumetricsPanel() {
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs font-mono">
-              <thead className="text-[10px] text-slate-400 uppercase border-b border-slate-800">
+              <thead className="text-[10px] text-slate-400 uppercase border-b border-surface-border">
                 <tr>
-                  <th className="py-2">Tumor Structure</th>
-                  <th className="py-2">Dice Score</th>
-                  <th className="py-2">Sensitivity</th>
-                  <th className="py-2">HD95 (mm)</th>
+                  <th className="py-2.5">Structure</th>
+                  <th className="py-2.5">Dice Score</th>
+                  <th className="py-2.5">Sensitivity</th>
+                  <th className="py-2.5">Specificity</th>
+                  <th className="py-2.5">HD95 (mm)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60 text-slate-200">
+              <tbody className="divide-y divide-surface-border text-slate-200">
                 {['WT', 'TC', 'ET'].map((key) => {
                   const m = metrics[key];
                   return (
                     <tr key={key}>
-                      <td className="py-2 font-semibold text-cyan-300">{key}</td>
-                      <td className="py-2">{m?.dice !== undefined ? (m.dice * 100).toFixed(2) + '%' : '—'}</td>
-                      <td className="py-2">{m?.sensitivity !== undefined ? (m.sensitivity * 100).toFixed(2) + '%' : '—'}</td>
-                      <td className="py-2">{m?.hausdorff95 !== undefined ? m.hausdorff95.toFixed(2) + ' mm' : '—'}</td>
+                      <td className="py-2.5 font-bold text-cyan-300">{key}</td>
+                      <td className="py-2.5 font-semibold">
+                        {m?.dice !== undefined ? (m.dice * 100).toFixed(2) + '%' : '—'}
+                      </td>
+                      <td className="py-2.5">
+                        {m?.sensitivity !== undefined ? (m.sensitivity * 100).toFixed(2) + '%' : '—'}
+                      </td>
+                      <td className="py-2.5">
+                        {m?.specificity !== undefined ? (m.specificity * 100).toFixed(2) + '%' : '—'}
+                      </td>
+                      <td className="py-2.5">
+                        {m?.hausdorff95 !== undefined ? m.hausdorff95.toFixed(2) + ' mm' : '—'}
+                      </td>
                     </tr>
                   );
                 })}
@@ -194,31 +204,46 @@ export function VolumetricsPanel() {
           </div>
         </div>
       ) : (
-        <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
-          <span>Ground truth mask was not provided during validation. Evaluation metrics (Dice, Sensitivity, HD95) are inactive.</span>
-          <span className="text-slate-500 font-mono text-[10px]">Unsupervised Inference Mode</span>
+        <div className="p-3.5 rounded-xl bg-surface border border-surface-border text-[11px] text-slate-400 flex items-center justify-between shadow-card">
+          <div className="flex items-center space-x-2">
+            <Info className="w-4 h-4 text-slate-500 shrink-0" />
+            <span>Ground truth mask was not uploaded. Quantitative metrics (Dice, Sensitivity, HD95) are inactive.</span>
+          </div>
+          <span className="text-slate-500 font-mono text-[10px]">Unsupervised Mode</span>
         </div>
       )}
 
-      {/* Action / Download Bar */}
+      {/* Download Action Bar */}
       {currentRunId && (
         <div className="flex flex-wrap gap-3 pt-2">
           <a
             href={api.getReportDownloadUrl(currentRunId)}
             download={`NeuroScope_Report_${currentRunId}.pdf`}
-            className="flex-1 py-3 px-4 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs tracking-wider uppercase transition-all shadow-glow-cyan flex items-center justify-center space-x-2"
+            className="flex-1 min-w-[240px]"
           >
-            <FileDown className="w-4 h-4" />
-            <span>Download Clinical PDF Dossier</span>
+            <Button
+              variant="primary"
+              size="lg"
+              className="w-full uppercase tracking-wider font-bold shadow-glow-cyan"
+            >
+              <FileDown className="w-4 h-4" />
+              <span>Download PDF Clinical Dossier</span>
+            </Button>
           </a>
 
           <a
             href={api.getPredictionDownloadUrl(currentRunId)}
             download={`prediction_${currentRunId}.nii.gz`}
-            className="flex-1 py-3 px-4 rounded-xl glass-panel hover:bg-slate-800 text-slate-200 font-semibold text-xs tracking-wider uppercase transition-colors border-slate-700 flex items-center justify-center space-x-2"
+            className="flex-1 min-w-[240px]"
           >
-            <Download className="w-4 h-4 text-cyan-400" />
-            <span>Export Segmentation Mask (NIfTI)</span>
+            <Button
+              variant="secondary"
+              size="lg"
+              className="w-full uppercase tracking-wider font-semibold"
+            >
+              <Download className="w-4 h-4 text-cyan-400" />
+              <span>Export Segmentation Mask (NIfTI)</span>
+            </Button>
           </a>
         </div>
       )}

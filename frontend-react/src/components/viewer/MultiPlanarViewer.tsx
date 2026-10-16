@@ -1,15 +1,12 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useStudyStore } from '../../store/studyStore';
 import { api } from '../../services/api';
-import { ViewAxis, MRIModality } from '../../types/api';
+import { MRIModality } from '../../types/api';
+import { Button } from '../ui/Button';
 import {
   Layers,
-  Sliders,
-  ZoomIn,
-  Eye,
   ChevronLeft,
   ChevronRight,
-  Maximize2,
   RefreshCw,
   Sparkles
 } from 'lucide-react';
@@ -33,17 +30,17 @@ export function MultiPlanarViewer() {
     setStudyDetails
   } = useStudyStore();
 
-  const [loadingSlice, setLoadingSlice] = useState(false);
+  const [_loadingSlice, setLoadingSlice] = useState(false);
 
-  // If no run is loaded, provide prompt
+  // If no run is loaded, provide empty state
   if (!currentRunId || !studyDetails) {
     return (
-      <div className="glass-panel p-12 rounded-2xl border-slate-800 text-center flex flex-col items-center justify-center space-y-4">
+      <div className="bg-surface p-12 rounded-2xl border border-surface-border text-center flex flex-col items-center justify-center space-y-4 shadow-card">
         <Layers className="w-12 h-12 text-slate-600" />
         <div>
-          <h3 className="text-base font-semibold text-slate-200">No Active Imaging Study Loaded</h3>
+          <h3 className="text-sm font-semibold text-slate-200">No Active Imaging Study Loaded</h3>
           <p className="text-xs text-slate-400 mt-1 max-w-sm">
-            Validate an MRI volume using BraTS or MSD protocol to initialize the 2D multiplanar workspace.
+            Validate an MRI volume using BraTS or MSD protocol in the left panel to initialize orthogonal slices.
           </p>
         </div>
       </div>
@@ -73,8 +70,7 @@ export function MultiPlanarViewer() {
   const handleRunInference = async () => {
     setIsSegmenting(true);
     try {
-      const segRes = await api.runSegmentation(currentRunId);
-      // Refresh study details to activate predictions
+      await api.runSegmentation(currentRunId);
       const updatedStudy = await api.getStudy(currentRunId);
       setStudyDetails(updatedStudy);
     } catch (err: any) {
@@ -88,17 +84,18 @@ export function MultiPlanarViewer() {
     <div className="space-y-4">
       
       {/* Top Controls Toolbar */}
-      <div className="glass-panel p-3.5 rounded-xl border-slate-800 flex flex-wrap items-center justify-between gap-3">
+      <div className="bg-surface p-3.5 rounded-xl border border-surface-border flex flex-wrap items-center justify-between gap-3 shadow-card">
         
         {/* Modality Toggles */}
-        <div className="flex items-center space-x-1.5 bg-slate-900/80 p-1 rounded-lg border border-slate-800">
+        <div className="flex items-center space-x-1 bg-surface-subtle p-1 rounded-lg border border-surface-border">
           {(['t1', 't1gd', 't2', 'flair'] as MRIModality[]).map((mod) => (
             <button
               key={mod}
+              type="button"
               onClick={() => setActiveModality(mod)}
               className={`px-2.5 py-1 rounded text-xs font-mono uppercase transition-colors ${
                 activeModality === mod
-                  ? 'bg-cyan-500 text-slate-950 font-bold'
+                  ? 'bg-surface-elevated text-cyan-300 font-bold border border-white/10'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -108,10 +105,11 @@ export function MultiPlanarViewer() {
 
           {studyDetails.has_prediction && (
             <button
+              type="button"
               onClick={() => setActiveModality('prediction')}
               className={`px-2.5 py-1 rounded text-xs font-mono uppercase transition-colors ${
                 activeModality === 'prediction'
-                  ? 'bg-red-500 text-white font-bold'
+                  ? 'bg-red-500/20 text-red-300 border border-red-500/40 font-bold'
                   : 'text-red-400 hover:text-red-300'
               }`}
             >
@@ -121,32 +119,35 @@ export function MultiPlanarViewer() {
         </div>
 
         {/* Axis Orientation Selector */}
-        <div className="flex items-center space-x-1 bg-slate-900/80 p-1 rounded-lg border border-slate-800">
+        <div className="flex items-center space-x-1 bg-surface-subtle p-1 rounded-lg border border-surface-border">
           <button
+            type="button"
             onClick={() => setSelectedAxis(2)}
             className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
               selectedAxis === 2
-                ? 'bg-slate-700 text-white'
+                ? 'bg-surface-elevated text-white font-semibold border border-white/10'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             Axial (Z)
           </button>
           <button
+            type="button"
             onClick={() => setSelectedAxis(1)}
             className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
               selectedAxis === 1
-                ? 'bg-slate-700 text-white'
+                ? 'bg-surface-elevated text-white font-semibold border border-white/10'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             Coronal (Y)
           </button>
           <button
+            type="button"
             onClick={() => setSelectedAxis(0)}
             className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
               selectedAxis === 0
-                ? 'bg-slate-700 text-white'
+                ? 'bg-surface-elevated text-white font-semibold border border-white/10'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -158,14 +159,14 @@ export function MultiPlanarViewer() {
         <div>
           {studyDetails.has_prediction ? (
             <div className="flex items-center space-x-3 text-xs">
-              <label className="flex items-center space-x-1.5 cursor-pointer text-slate-300">
+              <label className="flex items-center space-x-1.5 cursor-pointer text-slate-300 select-none">
                 <input
                   type="checkbox"
                   checked={overlaySegmentation}
                   onChange={(e) => setOverlaySegmentation(e.target.checked)}
-                  className="rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-0"
+                  className="rounded border-slate-700 bg-surface-elevated text-cyan-500 focus:ring-0"
                 />
-                <span>Overlay AI Tumor Mask</span>
+                <span>Overlay Tumor Mask</span>
               </label>
 
               {overlaySegmentation && (
@@ -178,7 +179,7 @@ export function MultiPlanarViewer() {
                     step="0.05"
                     value={overlayOpacity}
                     onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))}
-                    className="w-20 accent-cyan-400 h-1"
+                    className="w-16 accent-cyan-400 h-1"
                   />
                   <span className="text-[10px] text-cyan-400 font-mono w-6">
                     {Math.round(overlayOpacity * 100)}%
@@ -187,15 +188,17 @@ export function MultiPlanarViewer() {
               )}
             </div>
           ) : (
-            <button
+            <Button
+              variant="primary"
+              size="sm"
               onClick={handleRunInference}
               disabled={isSegmenting}
-              className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-red-500 to-amber-500 hover:from-red-400 hover:to-amber-400 text-slate-950 font-bold text-xs tracking-wider uppercase transition-all shadow-glow-coral flex items-center space-x-2"
+              className="bg-gradient-to-r from-red-500 to-amber-500 text-slate-950 font-bold"
             >
               {isSegmenting ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Segmenting MONAI SegResNet...</span>
+                  <span>Segmenting MONAI...</span>
                 </>
               ) : (
                 <>
@@ -203,14 +206,14 @@ export function MultiPlanarViewer() {
                   <span>Execute AI Segmentation</span>
                 </>
               )}
-            </button>
+            </Button>
           )}
         </div>
 
       </div>
 
       {/* Main 2D Medical Slice Canvas View */}
-      <div className="relative w-full aspect-square max-h-[580px] bg-black rounded-2xl overflow-hidden border border-slate-800 flex items-center justify-center select-none shadow-2xl">
+      <div className="relative w-full aspect-square max-h-[560px] bg-black rounded-2xl overflow-hidden border border-surface-border flex items-center justify-center select-none shadow-card">
         <img
           key={sliceUrl}
           src={sliceUrl}
@@ -221,27 +224,27 @@ export function MultiPlanarViewer() {
         />
 
         {/* Anatomical Orientation Markers */}
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 text-[11px] font-mono text-cyan-400/80 bg-black/60 px-2 py-0.5 rounded border border-cyan-500/20">
-          {selectedAxis === 2 ? 'ANTERIOR' : selectedAxis === 1 ? 'SUPERIOR' : 'SUPERIOR'}
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 text-[10px] font-mono text-cyan-300 bg-black/70 px-2 py-0.5 rounded border border-surface-border">
+          {selectedAxis === 2 ? 'ANTERIOR' : 'SUPERIOR'}
         </div>
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-[11px] font-mono text-cyan-400/80 bg-black/60 px-2 py-0.5 rounded border border-cyan-500/20">
-          {selectedAxis === 2 ? 'POSTERIOR' : selectedAxis === 1 ? 'INFERIOR' : 'INFERIOR'}
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10px] font-mono text-cyan-300 bg-black/70 px-2 py-0.5 rounded border border-surface-border">
+          {selectedAxis === 2 ? 'POSTERIOR' : 'INFERIOR'}
         </div>
-        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[11px] font-mono text-cyan-400/80 bg-black/60 px-1 py-1 rounded border border-cyan-500/20">
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-mono text-cyan-300 bg-black/70 px-1 py-1 rounded border border-surface-border">
           {selectedAxis === 2 ? 'R' : selectedAxis === 1 ? 'R' : 'A'}
         </div>
-        <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-mono text-cyan-400/80 bg-black/60 px-1 py-1 rounded border border-cyan-500/20">
+        <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono text-cyan-300 bg-black/70 px-1 py-1 rounded border border-surface-border">
           {selectedAxis === 2 ? 'L' : selectedAxis === 1 ? 'L' : 'P'}
         </div>
 
-        {/* DICOM-style HUD in corners */}
-        <div className="absolute top-4 left-4 text-[11px] font-mono text-slate-400 space-y-0.5 pointer-events-none">
-          <p className="text-cyan-400 font-bold">NeuroScope-3D PACS View</p>
+        {/* PACS HUD in corners */}
+        <div className="absolute top-4 left-4 text-[10px] font-mono text-slate-400 space-y-0.5 pointer-events-none bg-black/50 p-2 rounded border border-white/5">
+          <p className="text-cyan-400 font-bold">NeuroScope-3D PACS</p>
           <p>RUN: {currentRunId.slice(0, 8)}</p>
-          <p>SERIES: {activeModality.toUpperCase()}</p>
+          <p>MODALITY: {activeModality.toUpperCase()}</p>
         </div>
 
-        <div className="absolute top-4 right-4 text-[11px] font-mono text-slate-400 space-y-0.5 text-right pointer-events-none">
+        <div className="absolute top-4 right-4 text-[10px] font-mono text-slate-400 space-y-0.5 text-right pointer-events-none bg-black/50 p-2 rounded border border-white/5">
           <p>AXIS: {selectedAxis === 2 ? 'AXIAL' : selectedAxis === 1 ? 'CORONAL' : 'SAGITTAL'}</p>
           <p>SLICE: {currentSlice} / {maxSliceForCurrentAxis}</p>
           <p>VOX: {dims.join('×')}</p>
@@ -249,8 +252,8 @@ export function MultiPlanarViewer() {
 
         {/* Subregion Color Legend Overlay */}
         {studyDetails.has_prediction && overlaySegmentation && (
-          <div className="absolute bottom-4 left-4 glass-panel p-2.5 rounded-lg border-slate-800 text-[11px] space-y-1 pointer-events-none">
-            <div className="font-semibold text-slate-300 pb-0.5 border-b border-slate-800">
+          <div className="absolute bottom-4 left-4 bg-surface/85 backdrop-blur-md p-2.5 rounded-lg border border-surface-border text-[11px] space-y-1 pointer-events-none">
+            <div className="font-semibold text-slate-300 pb-0.5 border-b border-surface-border">
               Subregions
             </div>
             <div className="flex items-center space-x-2">
@@ -270,10 +273,12 @@ export function MultiPlanarViewer() {
       </div>
 
       {/* Slice Scrubber Navigation Bar */}
-      <div className="glass-panel p-3 rounded-xl border-slate-800 flex items-center space-x-4">
+      <div className="bg-surface p-3 rounded-xl border border-surface-border flex items-center space-x-4 shadow-card">
         <button
+          type="button"
           onClick={() => setSliceIndex(selectedAxis, Math.max(0, currentSlice - 1))}
-          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+          className="p-1.5 rounded-lg bg-surface-elevated hover:bg-surface-subtle text-slate-300 border border-surface-border"
+          aria-label="Previous Slice"
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
@@ -287,14 +292,16 @@ export function MultiPlanarViewer() {
             onChange={(e) => setSliceIndex(selectedAxis, parseInt(e.target.value, 10))}
             className="w-full accent-cyan-400 h-1.5 cursor-ew-resize"
           />
-          <span className="text-xs font-mono text-cyan-400 min-w-[50px] text-right">
+          <span className="text-xs font-mono text-cyan-300 min-w-[50px] text-right font-semibold">
             {currentSlice} / {maxSliceForCurrentAxis}
           </span>
         </div>
 
         <button
+          type="button"
           onClick={() => setSliceIndex(selectedAxis, Math.min(maxSliceForCurrentAxis, currentSlice + 1))}
-          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+          className="p-1.5 rounded-lg bg-surface-elevated hover:bg-surface-subtle text-slate-300 border border-surface-border"
+          aria-label="Next Slice"
         >
           <ChevronRight className="w-4 h-4" />
         </button>
