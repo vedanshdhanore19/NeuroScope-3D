@@ -1,0 +1,25 @@
+# Python / Virtual Environment
+__pycache__/
+*.py[cod]
+vh/
+env/
+venv/
+.env
+
+# Medical Scans & Temp Data
+*.nii
+*.nii.gz
+backend/temp/*
+backend/data/*
+!backend/temp/.gitkeep
+!backend/data/.gitkeep
+
+# Local Database
+*.db
+*.sqlite3
+
+# Node / Frontend
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+.DS_Store
