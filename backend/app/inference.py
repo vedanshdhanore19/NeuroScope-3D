@@ -84,19 +84,23 @@ def load_monai_model():
 def convert_nested_masks_to_brats_codes(
     tc_mask: np.ndarray, wt_mask: np.ndarray, et_mask: np.ndarray
 ) -> np.ndarray:
-    """Convert TC, WT, ET masks into BraTS-style labels 1, 2, and 4."""
-    # Enforce the expected nesting so overlapping threshold outputs are resolved
-    # consistently: ET is a subset of TC, which is a subset of WT.
+    """Convert MONAI TC, WT, ET threshold masks to BraTS labels.
+
+    Matches the upstream MONAI bundle's precedence: ET (label 4), then TC
+    (label 1), then WT-only edema (label 2). Model threshold masks are not
+    assumed to be perfectly nested.
+    """
+    tc_mask = np.asarray(tc_mask, dtype=bool)
     wt_mask = np.asarray(wt_mask, dtype=bool)
-    tc_mask = np.asarray(tc_mask, dtype=bool) & wt_mask
-    et_mask = np.asarray(et_mask, dtype=bool) & tc_mask
+    et_mask = np.asarray(et_mask, dtype=bool)
+    if tc_mask.shape != wt_mask.shape or tc_mask.shape != et_mask.shape:
+        raise ValueError("TC, WT, and ET masks must have identical shapes.")
 
     brats_map = np.zeros(wt_mask.shape, dtype=np.int16)
-    brats_map[wt_mask & ~tc_mask] = LABEL_ED
-    brats_map[tc_mask & ~et_mask] = LABEL_NCR
+    brats_map[wt_mask] = LABEL_ED
+    brats_map[tc_mask] = LABEL_NCR
     brats_map[et_mask] = LABEL_ET
     return brats_map
-
 
 def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np.ndarray, float]:
     """Run inference only with a successfully loaded trained checkpoint."""
