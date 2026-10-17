@@ -1,59 +1,141 @@
-@import '@fontsource-variable/inter';
+@import '@fontsource-variable/plus-jakarta-sans';
+@import '@fontsource/jetbrains-mono';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Core Clinical Palette */
+  --bg-primary: #f4f7fb;
+  --bg-surface: #ffffff;
+  --bg-surface-translucent: rgba(255, 255, 255, 0.88);
+  --bg-card: #ffffff;
+  --bg-accent-soft: #edf5fe;
+  --bg-dark-viewport: #0a0f1d;
+  --bg-dark-panel: #111827;
+
+  /* Typography */
+  --font-sans: 'Plus Jakarta Sans Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Medical Accents */
+  --color-navy: #0b192c;
+  --color-navy-dark: #07101e;
+  --color-navy-light: #1e293b;
+
+  --color-cyan: #0284c7;
+  --color-cyan-light: #38bdf8;
+  --color-cyan-glow: rgba(56, 189, 248, 0.25);
+
+  --color-mint: #00d690;
+  --color-mint-dark: #059669;
+  --color-mint-soft: #e6fcf5;
+
+  --color-amber: #f59e0b;
+  --color-coral: #ef4444;
+
+  /* BraTS Nested Sub-Region Colors */
+  --color-wt: #00d690; /* Whole Tumor (Mint) */
+  --color-tc: #f59e0b; /* Tumor Core (Amber) */
+  --color-et: #ef4444; /* Enhancing Tumor (Coral/Red) */
+
+  /* Neutral Slate Scale */
+  --text-main: #0b192c;
+  --text-muted: #64748b;
+  --text-subtle: #94a3b8;
+
+  --border-light: rgba(226, 232, 240, 0.9);
+  --border-subtle: rgba(203, 213, 225, 0.6);
+
+  /* Shadows */
+  --shadow-sm: 0 2px 8px rgba(15, 30, 60, 0.04);
+  --shadow-md: 0 10px 25px -5px rgba(15, 30, 60, 0.06), 0 8px 10px -6px rgba(15, 30, 60, 0.04);
+  --shadow-lg: 0 20px 45px -12px rgba(15, 30, 60, 0.09);
+  --shadow-mint-glow: 0 8px 24px -4px rgba(0, 214, 144, 0.35);
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-full: 9999px;
+}
+
 @layer base {
-  :root {
-    --bg-main: #0A0E17;
-    --surface-main: #0F1623;
-    --surface-elevated: #151D2C;
-    --border-subtle: rgba(255, 255, 255, 0.08);
-  }
-
   body {
-    @apply bg-background text-slate-100 antialiased selection:bg-cyan-500/25 selection:text-cyan-200 overflow-x-hidden font-sans;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-family: var(--font-sans);
+    color: var(--text-main);
+    background-color: var(--bg-primary);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+    overflow-x: hidden;
+    background:
+      radial-gradient(circle at 15% 10%, rgba(2, 132, 199, 0.07) 0%, transparent 40%),
+      radial-gradient(circle at 85% 15%, rgba(0, 214, 144, 0.05) 0%, transparent 45%),
+      radial-gradient(circle at 50% 60%, rgba(224, 242, 254, 0.35) 0%, transparent 60%),
+      var(--bg-primary);
   }
 }
 
-/* Custom Scrollbar */
+/* Custom Scrollbars */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
-
 ::-webkit-scrollbar-track {
-  background: #0A0E17;
+  background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: #1A2336;
-  border-radius: 3px;
+  background: #cbd5e1;
+  border-radius: var(--radius-full);
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: #25334D;
+  background: #94a3b8;
 }
 
-/* Glass & Card Classes */
-.glass-panel {
-  background: rgba(15, 22, 35, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+/* Clinical UI Classes */
+.card-clinical {
+  background: #ffffff;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-clinical:hover {
+  box-shadow: var(--shadow-lg);
+  border-color: rgba(186, 230, 253, 0.8);
+}
+
+.viewport-dark {
+  background: var(--bg-dark-viewport);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.glass-panel-hover {
-  transition: all 0.2s ease-in-out;
-}
-.glass-panel-hover:hover {
-  background: rgba(21, 29, 44, 0.9);
-  border-color: rgba(255, 255, 255, 0.15);
+.pulse-dot-mint {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--color-mint);
 }
 
-.workstation-card {
-  background: #0F1623;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+.pulse-dot-mint::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background-color: inherit;
+  animation: pulse-ring 1.8s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(2.4); opacity: 0; }
+  100% { transform: scale(0.95); opacity: 0; }
 }

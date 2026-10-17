@@ -7,41 +7,56 @@ export default {
   theme: {
     extend: {
       colors: {
-        background: '#0A0E17',
-        surface: {
-          DEFAULT: '#0F1623',
-          elevated: '#151D2C',
-          subtle: '#1A2336',
-          border: 'rgba(255, 255, 255, 0.08)',
-          'border-hover': 'rgba(255, 255, 255, 0.15)',
+        bg: {
+          primary: '#f4f7fb',
+          surface: '#ffffff',
+          accent: '#edf5fe',
+          viewport: '#0a0f1d',
+          panel: '#111827',
         },
-        primary: {
-          DEFAULT: '#22D3EE', // Cyan
-          dark: '#06B6D4',
-          glow: 'rgba(34, 211, 238, 0.15)',
+        navy: {
+          DEFAULT: '#0b192c',
+          dark: '#07101e',
+          light: '#1e293b',
         },
-        accent: {
-          cyan: '#22D3EE',
-          blue: '#3B82F6',
-          indigo: '#6366F1',
+        cyan: {
+          DEFAULT: '#0284c7',
+          light: '#38bdf8',
+        },
+        mint: {
+          DEFAULT: '#00d690',
+          dark: '#059669',
+          soft: '#e6fcf5',
+        },
+        amber: {
+          DEFAULT: '#f59e0b',
+          soft: '#fef3c7',
+        },
+        coral: {
+          DEFAULT: '#ef4444',
+          soft: '#fee2e2',
         },
         tumor: {
-          et: '#EF4444', // Enhancing Tumor (Coral/Red)
-          ncr: '#F59E0B', // Necrotic Core (Amber)
-          ed: '#10B981', // Peritumoral Edema (Emerald/Green)
-          wt: '#EC4899', // Whole Tumor (Pink/Magenta)
-          tc: '#F97316', // Tumor Core (Orange)
-        }
+          wt: '#00d690',
+          tc: '#f59e0b',
+          et: '#ef4444',
+        },
       },
       fontFamily: {
-        sans: ['"Inter Variable"', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['"Plus Jakarta Sans Variable"', 'system-ui', '-apple-system', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'Fira Code', 'monospace'],
       },
+      borderRadius: {
+        'sm': '8px',
+        'md': '14px',
+        'lg': '20px',
+        'xl': '28px',
+      },
       boxShadow: {
-        'subtle': '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-        'card': '0 4px 20px -2px rgba(0, 0, 0, 0.5)',
-        'glow-cyan': '0 0 20px rgba(34, 211, 238, 0.15)',
-        'glow-blue': '0 0 20px rgba(59, 130, 246, 0.15)',
+        'card': '0 10px 25px -5px rgba(15, 30, 60, 0.06), 0 8px 10px -6px rgba(15, 30, 60, 0.04)',
+        'card-hover': '0 20px 45px -12px rgba(15, 30, 60, 0.09)',
+        'mint-glow': '0 8px 24px -4px rgba(0, 214, 144, 0.35)',
+        'cyan-glow': '0 0 35px -5px rgba(2, 132, 199, 0.22)',
       },
     },
   },

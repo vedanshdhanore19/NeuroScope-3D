@@ -1,382 +1,285 @@
-import { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useStudyStore } from './store/studyStore';
 import { api } from './services/api';
+import { ValidationResponse } from './types/api';
+import { Navbar } from './components/Navbar';
+import { Footer } from './components/Footer';
+import { Toast, ToastMessage } from './components/ui/Toast';
+import { HeroSection } from './components/landing/HeroSection';
+import { StudyUpload } from './components/upload/StudyUpload';
+import { OrthogonalViewer } from './components/viewer/OrthogonalViewer';
+import { ResultsDashboard } from './components/results/ResultsDashboard';
+import { ReportExport } from './components/reports/ReportExport';
 import {
-  Brain,
-  Lock,
-  RotateCcw,
-  Menu,
-  X,
-  Layers,
-  Box,
+  UploadCloud,
   BarChart2,
-  ChevronRight,
-  ShieldCheck
+  FileText,
+  Play,
+  ArrowRight,
 } from 'lucide-react';
 
-import { StatusPill } from './components/ui/StatusPill';
-import { Button } from './components/ui/Button';
-
-// Subcomponents
-import { LandingHero } from './components/landing/LandingHero';
-import { LoginPage } from './components/auth/LoginPage';
-import { UploadWorkspace } from './components/upload/UploadWorkspace';
-import { MultiPlanarViewer } from './components/viewer/MultiPlanarViewer';
-import { Patient3DViewer } from './components/three/Patient3DViewer';
-import { VolumetricsPanel } from './components/analysis/VolumetricsPanel';
-
-export function App() {
+export const App: React.FC = () => {
   const {
     activeTab,
     setActiveTab,
     currentRunId,
-    workspaceMode,
-    setWorkspaceMode,
-    health,
+    setRunId,
+    setActiveFilenames,
+    setStudyDetails,
+    segmentationResults,
+    setSegmentationResults,
+    hasPrediction,
+    setHasPrediction,
     setHealth,
-    resetViewer,
-    mobileMenuOpen,
-    setMobileMenuOpen,
+    isSegmenting,
+    setIsSegmenting,
+    segmentElapsedSeconds,
+    setSegmentElapsedSeconds,
   } = useStudyStore();
 
-  // Poll backend health status on mount & interval
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const segmentTimerRef = useRef<number | null>(null);
+
+  const showToast = (type: 'success' | 'error' | 'info', message: string) => {
+    setToast({ type, message });
+  };
+
+  // Poll backend health status with latency every 15s
   useEffect(() => {
-    const fetchHealth = async () => {
+    const checkHealth = async () => {
       try {
-        const data = await api.checkHealth();
-        setHealth(data);
-      } catch (_err) {
-        setHealth(null);
+        const h = await api.checkHealthWithLatency();
+        setHealth(h);
+      } catch {
+        setHealth({ status: 'offline', latencyMs: 0 });
       }
     };
-    fetchHealth();
-    const interval = setInterval(fetchHealth, 15000);
+
+    checkHealth();
+    const interval = setInterval(checkHealth, 15000);
     return () => clearInterval(interval);
   }, [setHealth]);
 
-  const isModelReady = health?.model?.ready_for_inference ?? false;
-  const isServiceOnline = health?.status === 'healthy';
+  // Restore study details on mount if currentRunId is saved in localStorage
+  useEffect(() => {
+    if (!currentRunId) return;
+
+    api.getStudy(currentRunId)
+      .then((details) => {
+        setStudyDetails(details);
+        if (details.volumes && Object.keys(details.volumes).length > 0) {
+          setHasPrediction(true);
+          setSegmentationResults({
+            run_id: details.run_id,
+            status: details.status,
+            inference_time_seconds: details.inference_time_seconds || 0,
+            volumes: details.volumes,
+            metrics: details.metrics ?? null,
+            prediction_download_url: api.getPredictionDownloadUrl(details.run_id),
+            report_download_url: api.getReportDownloadUrl(details.run_id),
+          });
+        }
+      })
+      .catch((err: any) => {
+        if (err.response?.status === 404) {
+          setRunId(null);
+          setStudyDetails(null);
+          setSegmentationResults(null);
+          setHasPrediction(false);
+          showToast('info', 'Previous study session expired or was cleared.');
+        } else {
+          console.warn('Could not restore previous study:', err);
+        }
+      });
+  }, [currentRunId, setHasPrediction, setRunId, setSegmentationResults, setStudyDetails]);
+
+  // Validation success callback
+  const handleValidationSuccess = (result: ValidationResponse, filenames: Record<string, string>) => {
+    setRunId(result.run_id);
+    setActiveFilenames(filenames);
+    setSegmentationResults(null);
+    setHasPrediction(false);
+
+    showToast('success', `Study validated successfully! Provenance SHA-256 registered.`);
+    setActiveTab('viewer');
+  };
+
+  // Run Segmentation action
+  const handleRunSegmentation = async () => {
+    if (!currentRunId || isSegmenting) return;
+
+    setIsSegmenting(true);
+    setSegmentElapsedSeconds(0);
+    const startTimestamp = Date.now();
+
+    segmentTimerRef.current = window.setInterval(() => {
+      setSegmentElapsedSeconds(Math.round((Date.now() - startTimestamp) / 1000));
+    }, 500);
+
+    try {
+      const results = await api.runSegmentation(currentRunId);
+      setSegmentationResults(results);
+      setHasPrediction(true);
+
+      // Refresh study record
+      const updatedDetails = await api.getStudy(currentRunId);
+      setStudyDetails(updatedDetails);
+
+      showToast(
+        'success',
+        `Segmentation completed in ${results.inference_time_seconds.toFixed(2)}s!`
+      );
+      setActiveTab('results');
+    } catch (err: any) {
+      console.error('Segmentation error:', err);
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : detail?.message || err.message || 'Inference error';
+      showToast('error', `Segmentation failed: ${msg}`);
+    } finally {
+      setIsSegmenting(false);
+      if (segmentTimerRef.current) {
+        clearInterval(segmentTimerRef.current);
+        segmentTimerRef.current = null;
+      }
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-background text-slate-100 flex flex-col font-sans selection:bg-cyan-500/25 selection:text-cyan-200">
-      
-      {/* Top Application Header */}
-      <header className="sticky top-0 z-50 bg-surface/90 backdrop-blur-md border-b border-surface-border">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          
-          {/* Logo & Platform Name */}
-          <div
-            onClick={() => setActiveTab('landing')}
-            className="flex items-center space-x-3 cursor-pointer group"
-          >
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-subtle group-hover:scale-105 transition-transform">
-              <Brain className="w-4.5 h-4.5 text-slate-950 font-bold" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-1.5">
-                <span className="text-sm font-bold tracking-tight text-white">
-                  NeuroScope
-                </span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-400 font-mono border border-cyan-500/30">
-                  3D
-                </span>
+    <div className="flex flex-col min-h-screen bg-bg-primary text-navy font-sans antialiased selection:bg-cyan/15 selection:text-cyan">
+      {/* Top Clinical Navbar */}
+      <Navbar onOpenAuth={() => setActiveTab('dashboard')} />
+
+      {/* Toast Notification */}
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
+
+      {/* Main Content Area */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8">
+        {/* TAB 1: DASHBOARD */}
+        {activeTab === 'dashboard' && (
+          <HeroSection
+            onStartUpload={() => setActiveTab('upload')}
+            onExploreViewer={() => setActiveTab('viewer')}
+            onRunSegmentation={handleRunSegmentation}
+            isSegmenting={isSegmenting}
+            segmentElapsed={segmentElapsedSeconds}
+          />
+        )}
+
+        {/* TAB 2: UPLOAD */}
+        {activeTab === 'upload' && (
+          <StudyUpload
+            onValidationSuccess={handleValidationSuccess}
+            onErrorToast={(msg) => showToast('error', msg)}
+          />
+        )}
+
+        {/* TAB 3: VIEWER */}
+        {activeTab === 'viewer' &&
+          (currentRunId ? (
+            <OrthogonalViewer
+              runId={currentRunId}
+              hasPrediction={hasPrediction}
+              onRunSegmentation={handleRunSegmentation}
+              isSegmenting={isSegmenting}
+              elapsedSeconds={segmentElapsedSeconds}
+            />
+          ) : (
+            <div className="py-24 text-center max-w-md mx-auto space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-sky-50 text-cyan flex items-center justify-center mx-auto shadow-sm">
+                <UploadCloud className="w-8 h-8" />
               </div>
-              <p className="text-[10px] text-slate-400 font-mono tracking-wider">
-                MONAI SegResNet Engine
+              <h3 className="text-xl font-extrabold text-navy">No Active Study Loaded</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Please upload 4 MRI sequences (T1, T1Gd, T2, FLAIR) or an MSD Task01 dataset case to
+                start orthogonal multiplanar inspection.
               </p>
-            </div>
-          </div>
-
-          {/* Navigation Controls (Desktop) */}
-          <nav className="hidden md:flex items-center space-x-1">
-            <button
-              onClick={() => setActiveTab('landing')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                activeTab === 'landing'
-                  ? 'text-cyan-300 bg-surface-elevated border border-surface-border'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
-            >
-              Overview
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('workspace');
-                setWorkspaceMode('2d');
-              }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                activeTab === 'workspace' && workspaceMode === '2d'
-                  ? 'text-cyan-300 bg-surface-elevated border border-surface-border'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
-            >
-              Imaging Workspace
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('workspace');
-                setWorkspaceMode('3d');
-              }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                activeTab === 'workspace' && workspaceMode === '3d'
-                  ? 'text-cyan-300 bg-surface-elevated border border-surface-border'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
-            >
-              3D Viewer
-            </button>
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                activeTab === 'analytics'
-                  ? 'text-cyan-300 bg-surface-elevated border border-surface-border'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-              }`}
-            >
-              Volumetrics & Metrics
-            </button>
-          </nav>
-
-          {/* Right Header Status / Auth */}
-          <div className="hidden sm:flex items-center space-x-3">
-            {/* Backend Health Badge */}
-            <StatusPill
-              status={
-                isModelReady
-                  ? 'online'
-                  : isServiceOnline
-                  ? 'warning'
-                  : 'connecting'
-              }
-              label={
-                isModelReady
-                  ? 'API: READY (8001)'
-                  : isServiceOnline
-                  ? 'API: CONNECTED'
-                  : 'API: CONNECTING'
-              }
-            />
-
-            {/* NeuroScan Login Button */}
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setActiveTab('login')}
-              className="text-xs font-medium"
-            >
-              <Lock className="w-3.5 h-3.5 text-slate-400" />
-              <span>NeuroScan</span>
-            </Button>
-          </div>
-
-          {/* Mobile Menu Hamburger */}
-          <div className="flex md:hidden items-center space-x-2">
-            <StatusPill
-              status={isModelReady ? 'online' : 'connecting'}
-              label={isModelReady ? '8001' : '...'}
-              className="px-2 py-0.5 text-[10px]"
-            />
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 rounded-lg bg-surface-elevated border border-surface-border text-slate-300 hover:text-white"
-              aria-label="Toggle Navigation Menu"
-            >
-              {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </button>
-          </div>
-
-        </div>
-
-        {/* Mobile Dropdown Drawer */}
-        {mobileMenuOpen && (
-          <div className="md:hidden border-t border-surface-border bg-surface-elevated px-4 pt-3 pb-5 space-y-2">
-            <button
-              onClick={() => setActiveTab('landing')}
-              className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium flex items-center justify-between ${
-                activeTab === 'landing' ? 'bg-cyan-500/15 text-cyan-300' : 'text-slate-300'
-              }`}
-            >
-              <span>Overview</span>
-              <ChevronRight className="w-4 h-4 text-slate-500" />
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('workspace');
-                setWorkspaceMode('2d');
-              }}
-              className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium flex items-center justify-between ${
-                activeTab === 'workspace' && workspaceMode === '2d'
-                  ? 'bg-cyan-500/15 text-cyan-300'
-                  : 'text-slate-300'
-              }`}
-            >
-              <div className="flex items-center space-x-2">
-                <Layers className="w-4 h-4 text-cyan-400" />
-                <span>Imaging Workspace (2D)</span>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-500" />
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('workspace');
-                setWorkspaceMode('3d');
-              }}
-              className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium flex items-center justify-between ${
-                activeTab === 'workspace' && workspaceMode === '3d'
-                  ? 'bg-cyan-500/15 text-cyan-300'
-                  : 'text-slate-300'
-              }`}
-            >
-              <div className="flex items-center space-x-2">
-                <Box className="w-4 h-4 text-cyan-400" />
-                <span>3D Spatial Viewer</span>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-500" />
-            </button>
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium flex items-center justify-between ${
-                activeTab === 'analytics' ? 'bg-cyan-500/15 text-cyan-300' : 'text-slate-300'
-              }`}
-            >
-              <div className="flex items-center space-x-2">
-                <BarChart2 className="w-4 h-4 text-cyan-400" />
-                <span>Volumetrics & Metrics</span>
-              </div>
-              <ChevronRight className="w-4 h-4 text-slate-500" />
-            </button>
-            <div className="pt-2 border-t border-surface-border">
               <button
-                onClick={() => setActiveTab('login')}
-                className="w-full text-left px-3 py-2.5 rounded-lg text-xs font-medium text-slate-300 flex items-center space-x-2"
+                type="button"
+                onClick={() => setActiveTab('upload')}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-navy hover:bg-navy-dark text-white text-xs font-bold shadow-md transition-all"
               >
-                <Lock className="w-4 h-4 text-slate-400" />
-                <span>NeuroScan Sign In</span>
+                <span>Upload MRI Study</span>
+                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
-          </div>
-        )}
-      </header>
+          ))}
 
-      {/* Main App Content Viewport */}
-      <main className="flex-1">
-        {activeTab === 'landing' && <LandingHero />}
-
-        {activeTab === 'login' && <LoginPage />}
-
-        {activeTab === 'workspace' && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-            
-            {/* Top Workspace Header Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-surface-border">
-              <div>
-                <h2 className="text-xl font-bold text-white flex items-center space-x-2">
-                  <span>Medical Imaging & Segmentation Workspace</span>
-                  {currentRunId && (
-                    <span className="text-xs font-mono font-normal text-cyan-400 bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-500/20">
-                      ID: {currentRunId.slice(0, 8)}
-                    </span>
-                  )}
-                </h2>
-                <p className="text-xs text-slate-400">
-                  Validate multi-parametric MRI volumes, execute SegResNet deep learning inference, and inspect orthogonal slices.
-                </p>
+        {/* TAB 4: RESULTS */}
+        {activeTab === 'results' &&
+          (segmentationResults ? (
+            <ResultsDashboard
+              results={segmentationResults}
+              onStartNewStudy={() => setActiveTab('upload')}
+              onExploreViewer={() => setActiveTab('viewer')}
+            />
+          ) : (
+            <div className="py-24 text-center max-w-md mx-auto space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto shadow-sm">
+                <BarChart2 className="w-8 h-8" />
               </div>
-
-              {currentRunId && (
-                <div className="flex items-center space-x-2">
-                  {/* Toggle 2D vs 3D */}
-                  <div className="flex items-center bg-surface-subtle p-1 rounded-lg border border-surface-border text-xs font-medium">
-                    <button
-                      onClick={() => setWorkspaceMode('2d')}
-                      className={`px-3 py-1 rounded transition-colors ${
-                        workspaceMode === '2d'
-                          ? 'bg-surface-elevated text-cyan-300 font-bold border border-white/10'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      2D Orthogonal
-                    </button>
-                    <button
-                      onClick={() => setWorkspaceMode('3d')}
-                      className={`px-3 py-1 rounded transition-colors ${
-                        workspaceMode === '3d'
-                          ? 'bg-surface-elevated text-cyan-300 font-bold border border-white/10'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      3D Cluster Space
-                    </button>
-                  </div>
-
-                  {/* Reset Study */}
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={resetViewer}
-                    title="Load New Study"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>New Study</span>
-                  </Button>
-                </div>
+              <h3 className="text-xl font-extrabold text-navy">No Volumetric Results Yet</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Run deep learning segmentation on a validated study to quantify Whole Tumor (WT),
+                Tumor Core (TC), and Enhancing Tumor (ET) physical volumes.
+              </p>
+              {currentRunId ? (
+                <button
+                  type="button"
+                  onClick={handleRunSegmentation}
+                  disabled={isSegmenting}
+                  className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-mint hover:bg-mint-dark text-white text-xs font-bold shadow-mint-glow transition-all disabled:opacity-50"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>
+                    {isSegmenting
+                      ? `Segmenting (${segmentElapsedSeconds}s)...`
+                      : 'Run Segmentation Now'}
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('upload')}
+                  className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-navy hover:bg-navy-dark text-white text-xs font-bold shadow-md transition-all"
+                >
+                  <span>Upload Study Ingestion</span>
+                </button>
               )}
             </div>
+          ))}
 
-            {/* Layout: Left Column (Upload / Configuration) & Right Column (Viewer) */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              
-              <div className="lg:col-span-5 space-y-4">
-                <UploadWorkspace />
+        {/* TAB 5: REPORTS */}
+        {activeTab === 'reports' &&
+          (currentRunId ? (
+            <ReportExport
+              runId={currentRunId}
+              hasPrediction={hasPrediction}
+              onStartNewStudy={() => setActiveTab('upload')}
+              onExploreViewer={() => setActiveTab('viewer')}
+            />
+          ) : (
+            <div className="py-24 text-center max-w-md mx-auto space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto shadow-sm">
+                <FileText className="w-8 h-8" />
               </div>
-
-              <div className="lg:col-span-7">
-                {workspaceMode === '2d' ? (
-                  <MultiPlanarViewer />
-                ) : (
-                  <Patient3DViewer />
-                )}
-              </div>
-
-            </div>
-
-          </div>
-        )}
-
-        {activeTab === 'analytics' && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-            <div className="pb-4 border-b border-surface-border">
-              <h2 className="text-xl font-bold text-white">
-                Tumor Volumetrics & Evaluation Dossier
-              </h2>
-              <p className="text-xs text-slate-400">
-                Quantitative physical volumetrics in milliliters (mL) and comparative metrics.
+              <h3 className="text-xl font-extrabold text-navy">No Active Study for Reports</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Clinical PDF dossiers and NIfTI prediction exports require an active study run.
               </p>
+              <button
+                type="button"
+                onClick={() => setActiveTab('upload')}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-navy hover:bg-navy-dark text-white text-xs font-bold shadow-md transition-all"
+              >
+                <span>Start New Study</span>
+              </button>
             </div>
-
-            <VolumetricsPanel />
-          </div>
-        )}
+          ))}
       </main>
 
-      {/* Global Academic Disclaimer Footer */}
-      <footer className="border-t border-surface-border bg-surface py-6 text-center text-xs text-slate-500 font-mono">
-        <div className="max-w-7xl mx-auto px-4 space-y-1.5">
-          <div className="flex items-center justify-center space-x-2 text-slate-400">
-            <ShieldCheck className="w-4 h-4 text-cyan-400" />
-            <span className="font-semibold text-slate-300">
-              NeuroScope-3D • Medical Imaging Research Platform
-            </span>
-            <span>•</span>
-            <span>MONAI SegResNet Checkpoint (SHA-256: 860ccb3f1c...)</span>
-          </div>
-          <p className="text-slate-500 text-[11px] max-w-xl mx-auto">
-            Academic research prototype only. Not cleared or approved by the FDA or CE for clinical diagnostic decisions.
-          </p>
-        </div>
-      </footer>
-
+      {/* Clinical Footer */}
+      <Footer />
     </div>
   );
-}
+};
 export default App;

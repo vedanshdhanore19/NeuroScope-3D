@@ -35,3 +35,6 @@ frontend/node_modules/
 frontend/build/
 frontend/dist/
 .DS_Store
+_reference/
+frontend-react/node_modules/
+frontend-react/dist/

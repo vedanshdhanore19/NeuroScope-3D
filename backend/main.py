@@ -64,6 +64,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 from fastapi.staticfiles import StaticFiles
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
 if frontend_dir.is_dir():
@@ -590,3 +593,86 @@ def download_report(run_id: str):
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="PDF report not found.")
     return FileResponse(pdf_path, filename="NeuroScope_Report.pdf", media_type="application/pdf")
+
+
+# =========================================================================
+# Additive Visualization Routes (Viewer & 3D Marching Cubes Engine)
+# =========================================================================
+
+from app.visualization import get_study_volume_info, render_slice_png, generate_tumor_mesh
+
+
+def _validate_run_id_format(run_id: str) -> None:
+    """Guards against directory traversal by strictly enforcing UUID format."""
+    try:
+        uuid.UUID(run_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid run_id format. Must be a valid UUID.")
+
+
+@app.get("/api/v1/jobs/{run_id}/volume-info")
+def get_volume_info(run_id: str):
+    """Retrieves volume spatial dimensions, voxel spacing, and available orthogonal planes."""
+    _validate_run_id_format(run_id)
+    try:
+        return get_study_volume_info(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve volume info: {str(exc)}")
+
+
+@app.get("/api/v1/jobs/{run_id}/slice")
+def get_viewer_slice(
+    run_id: str,
+    modality: str = Query("t1", description="MRI modality: t1, t1gd, t2, flair"),
+    plane: str = Query("axial", description="Anatomical plane: axial, coronal, sagittal"),
+    index: Optional[int] = Query(None, description="Slice coordinate index along selected plane"),
+    regions: Optional[str] = Query("WT,TC,ET", description="Comma-separated tumor regions to display: WT,TC,ET"),
+    brightness: float = Query(1.0, ge=0.1, le=3.0, description="Brightness adjustment multiplier"),
+    contrast: float = Query(1.0, ge=0.1, le=3.0, description="Contrast adjustment multiplier"),
+    alpha: float = Query(0.55, ge=0.0, le=1.0, description="Overlay opacity blending ratio")
+):
+    """Renders a viewer-grade 2D orthogonal slice with robust percentile scaling and union region overlays."""
+    _validate_run_id_format(run_id)
+    try:
+        png_bytes = render_slice_png(
+            run_id=run_id,
+            modality=modality,
+            plane=plane,
+            slice_idx=index,
+            regions=regions,
+            brightness=brightness,
+            contrast=contrast,
+            alpha=alpha
+        )
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={"Cache-Control": "private, max-age=60"}
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to render slice: {str(exc)}")
+
+
+@app.get("/api/v1/jobs/{run_id}/mesh")
+def get_mesh(
+    run_id: str,
+    region: str = Query("WT", description="Tumor target region: WT, TC, or ET"),
+    max_faces: int = Query(150000, ge=50, le=500000, description="Maximum triangle face count budget")
+):
+    """Extracts a 3D polygonal surface mesh (Marching Cubes) formatted for Three.js BufferGeometry."""
+    _validate_run_id_format(run_id)
+    try:
+        return generate_tumor_mesh(run_id=run_id, region=region, max_faces=max_faces)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate tumor mesh: {str(exc)}")
+
