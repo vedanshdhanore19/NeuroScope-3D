@@ -1,0 +1,23 @@
+# Run the backend:  docker compose up --build -d
+# Health check:     http://localhost:7860/health
+services:
+  backend:
+    build: .
+    image: neuroscope-backend
+    container_name: neuroscope-backend
+    restart: unless-stopped
+    ports:
+      - "${PORT:-7860}:7860"
+    environment:
+      PORT: "7860"
+      # Comma-separated exact origins allowed to call the API (your Vercel URL + local dev)
+      NEUROSCOPE_CORS_ORIGINS: "${NEUROSCOPE_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
+      NEUROSCOPE_CORS_ORIGIN_REGEX: "${NEUROSCOPE_CORS_ORIGIN_REGEX:-https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?}"
+      MAX_FILE_SIZE_BYTES: "${MAX_FILE_SIZE_BYTES:-1073741824}"
+    volumes:
+      - neuroscope-data:/data
+    # Inference on CPU needs RAM; raise/remove if your Docker host is smaller.
+    mem_limit: 6g
+
+volumes:
+  neuroscope-data:

@@ -1,0 +1,11 @@
+# Optional Render blueprint (backend only). Needs a paid instance with >= 2 GB RAM for inference.
+services:
+  - type: web
+    name: neuroscope-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: standard
+    healthCheckPath: /health
+    envVars:
+      - key: NEUROSCOPE_CORS_ORIGINS
+        sync: false   # set to https://<your-app>.vercel.app

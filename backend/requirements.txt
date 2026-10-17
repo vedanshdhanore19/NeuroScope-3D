@@ -11,3 +11,4 @@ reportlab>=4.0.0
 python-multipart>=0.0.6
 pydantic>=2.0.0
 sqlalchemy>=2.0.0
+pillow>=10.0.0

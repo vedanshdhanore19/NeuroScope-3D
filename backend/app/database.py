@@ -47,6 +47,7 @@ class Study(Base):
 
     sha256_hash = Column(String(64), nullable=False)
     is_skull_stripped = Column(Boolean, default=True)
+    dataset_profile = Column(String(30), default="brats")
 
     # Relationships
     runs = relationship("InferenceRun", back_populates="study", cascade="all, delete-orphan")
@@ -116,9 +117,23 @@ class FailureLog(Base):
     file_info = Column(Text, nullable=True)
 
 
+from sqlalchemy import text
+
+
 def init_db():
-    """Initializes SQLite tables."""
+    """Initializes SQLite tables and handles lightweight schema migration."""
     Base.metadata.create_all(bind=engine)
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE studies ADD COLUMN dataset_profile VARCHAR(30) DEFAULT 'brats'"))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE evaluation_metrics ADD COLUMN hd95_mm FLOAT"))
+            conn.commit()
+        except Exception:
+            pass
 
 
 def get_db():
