@@ -1,5 +1,6 @@
 """Input sanity and validation for NeuroScope 3D."""
 import hashlib
+import gzip
 import os
 from typing import Dict, Tuple
 
@@ -37,12 +38,45 @@ def check_file_size(file_path: str):
         )
 
 
+def _check_gzip_integrity(file_path: str) -> None:
+    """Give .nii.gz uploads a clear corrupt-gzip error instead of a generic parser failure."""
+    if not file_path.lower().endswith(".gz"):
+        return
+    try:
+        with gzip.open(file_path, "rb") as stream:
+            stream.read(2)
+    except (OSError, EOFError, gzip.BadGzipFile) as exc:
+        raise ValidationError("CORRUPT_GZIP", f"The uploaded gzip container is corrupt: {exc}") from exc
+
+
+def _check_brain_plausibility(data: np.ndarray, zooms: Tuple[float, ...]) -> None:
+    """Reject obviously non-brain/implausible volumes while leaving skull stripping as a warning."""
+    nonzero = np.isfinite(data) & (np.abs(data) > 1e-6)
+    voxel_volume = float(np.prod(zooms[:3]))
+    nonzero_ml = float(np.count_nonzero(nonzero) * voxel_volume / 1000.0)
+    if nonzero_ml < 300.0 or nonzero_ml > 2500.0:
+        raise ValidationError(
+            "NOT_A_BRAIN",
+            f"Non-zero physical extent is {nonzero_ml:.1f} mL, outside the plausible brain range of 300–2500 mL.",
+            {"nonzero_volume_ml": round(nonzero_ml, 2)},
+        )
+
+    values = data[nonzero]
+    if values.size > 1000:
+        q05, q95 = np.percentile(values, [5, 95])
+        if float(q95 - q05) <= max(1e-6, abs(float(q05)) * 1e-4):
+            raise ValidationError("NOT_A_BRAIN", "Volume intensity distribution is near-uniform noise/constant data.")
+
+
 def validate_single_nifti(file_path: str) -> Tuple[nib.Nifti1Image, np.ndarray, np.ndarray, Tuple[float, ...]]:
     """Validate one 3D NIfTI volume."""
     check_file_size(file_path)
+    _check_gzip_integrity(file_path)
     try:
         img = nib.load(file_path)
         data = img.get_fdata(dtype=np.float32)
+    except ValidationError:
+        raise
     except Exception as exc:
         raise ValidationError(
             code="CORRUPT_NIFTI",
@@ -66,6 +100,7 @@ def validate_single_nifti(file_path: str) -> Tuple[nib.Nifti1Image, np.ndarray, 
     if len(zooms) != 3 or not np.all(np.isfinite(zooms)) or any(float(z) <= 0 for z in zooms):
         raise ValidationError("INVALID_SPACING", "Voxel spacing must contain three positive finite values.")
 
+    _check_brain_plausibility(data, zooms)
     return img, data, affine, zooms
 
 
@@ -111,7 +146,6 @@ def validate_expert_mask(
             )
         return convert_msd_labels_to_brats(mask_data)
 
-    # Standard BraTS label profile: 0=bg, 1=NCR, 2=ED, 4=ET
     if not labels.issubset(BRATS_ALLOWED_LABELS):
         unsupported = sorted(list(labels - BRATS_ALLOWED_LABELS))
         raise ValidationError(
@@ -124,19 +158,19 @@ def validate_expert_mask(
 def validate_msd_4d_nifti(file_path: str) -> Tuple[nib.Nifti1Image, np.ndarray, np.ndarray, Tuple[float, ...]]:
     """Validate an MSD 4D brain volume (expected shape [H, W, D, 4])."""
     check_file_size(file_path)
+    _check_gzip_integrity(file_path)
     try:
         img = nib.load(file_path)
         data = img.get_fdata(dtype=np.float32)
+    except ValidationError:
+        raise
     except Exception as exc:
-        raise ValidationError(
-            code="CORRUPT_NIFTI",
-            message=f"Could not parse MSD 4D NIfTI file: {exc}"
-        ) from exc
+        raise ValidationError("CORRUPT_NIFTI", f"Could not parse MSD 4D NIfTI file: {exc}") from exc
 
     if data.ndim != 4 or data.shape[3] != 4:
         raise ValidationError(
-            code="UNSUPPORTED_DIMENSIONS",
-            message=f"Expected a 4D volume with 4 modalities (shape [X, Y, Z, 4]); received shape {data.shape}."
+            "UNSUPPORTED_DIMENSIONS",
+            f"Expected a 4D volume with 4 modalities (shape [X, Y, Z, 4]); received shape {data.shape}."
         )
     if not np.all(np.isfinite(data)):
         raise ValidationError("NONFINITE_VALUES", "Volume contains NaN or infinite values.")
@@ -149,7 +183,6 @@ def validate_msd_4d_nifti(file_path: str) -> Tuple[nib.Nifti1Image, np.ndarray, 
         raise ValidationError("INVALID_AFFINE", "NIfTI spatial affine is invalid or singular.")
     if len(zooms) != 3 or not np.all(np.isfinite(zooms)) or any(float(z) <= 0 for z in zooms):
         raise ValidationError("INVALID_SPACING", "Voxel spacing must contain three positive finite values.")
-
     return img, data, affine, zooms
 
 
@@ -157,10 +190,7 @@ def validate_study_set(file_paths: Dict[str, str]) -> Dict[str, object]:
     """Validate the four required MRI modalities and their geometry."""
     for modality in REQUIRED_MODALITIES:
         if not file_paths.get(modality):
-            raise ValidationError(
-                "MISSING_SEQUENCE",
-                f"Missing required modality sequence: '{modality.upper()}'."
-            )
+            raise ValidationError("MISSING_SEQUENCE", f"Missing required modality sequence: '{modality.upper()}'.")
 
     images, affines, shapes, hashes = {}, {}, {}, []
     for modality in REQUIRED_MODALITIES:
@@ -175,15 +205,9 @@ def validate_study_set(file_paths: Dict[str, str]) -> Dict[str, object]:
     ref_affine = affines["t1"]
     for modality in REQUIRED_MODALITIES[1:]:
         if shapes[modality] != ref_shape:
-            raise ValidationError(
-                "SHAPE_MISMATCH",
-                f"{modality.upper()} shape {shapes[modality]} does not match T1 shape {ref_shape}."
-            )
+            raise ValidationError("SHAPE_MISMATCH", f"{modality.upper()} shape {shapes[modality]} does not match T1 shape {ref_shape}.")
         if not np.allclose(affines[modality], ref_affine, atol=1e-3):
-            raise ValidationError(
-                "AFFINE_MISMATCH",
-                f"{modality.upper()} spatial affine does not match T1."
-            )
+            raise ValidationError("AFFINE_MISMATCH", f"{modality.upper()} spatial affine does not match T1.")
 
     t1_data = images["t1"].get_fdata(dtype=np.float32)
     combined_hash = hashlib.sha256("".join(hashes).encode("utf-8")).hexdigest()
