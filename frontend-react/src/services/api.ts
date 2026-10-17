@@ -23,4 +23,27 @@ export const api = {
     const q = new URLSearchParams({ modality, plane, index: String(index), ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])) });
     return `${baseURL}/api/v1/jobs/${encodeURIComponent(runId)}/slice?${q.toString()}`;
   },
+  getViewerSliceUrl(
+    runId: string,
+    params: {
+      modality: string;
+      plane: string;
+      index: number;
+      regions?: string;
+      brightness?: number;
+      contrast?: number;
+      alpha?: number;
+    }
+  ) {
+    const q = new URLSearchParams({
+      modality: params.modality,
+      plane: params.plane,
+      index: String(params.index),
+      ...(params.regions !== undefined && { regions: params.regions }),
+      ...(params.brightness !== undefined && { brightness: String(params.brightness) }),
+      ...(params.contrast !== undefined && { contrast: String(params.contrast) }),
+      ...(params.alpha !== undefined && { alpha: String(params.alpha) }),
+    });
+    return `${baseURL}/api/v1/jobs/${encodeURIComponent(runId)}/slice?${q.toString()}`;
+  },
 };
