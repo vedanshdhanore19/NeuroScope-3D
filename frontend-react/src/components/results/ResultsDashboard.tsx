@@ -35,12 +35,20 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
   const { run_id, inference_time_seconds, volumes, metrics } = results;
 
   const wtVolume = volumes?.WT?.volume_ml ?? 0;
-  const isPlausibilityWarning = wtVolume > 800; // Unusually large lesion >800 mL
+  const tcVolume = volumes?.TC?.volume_ml ?? 0;
+  const etVolume = volumes?.ET?.volume_ml ?? 0;
+  const within5Percent =
+    wtVolume > 0 &&
+    tcVolume > 0 &&
+    etVolume > 0 &&
+    Math.abs(wtVolume - tcVolume) / wtVolume < 0.05 &&
+    Math.abs(tcVolume - etVolume) / tcVolume < 0.05;
+  const isPlausibilityWarning = wtVolume > 800 || within5Percent;
 
   const regions = [
     {
       key: 'WT',
-      label: 'Whole Tumor (WT)',
+      label: 'WT (Whole tumor)',
       description: 'Encompasses necrotic core, peritumoral vasogenic edema, and active tumor',
       color: '#00d690',
       bgLight: '#ecfdf5',
@@ -50,7 +58,7 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
     },
     {
       key: 'TC',
-      label: 'Tumor Core (TC)',
+      label: 'TC (Tumor core)',
       description: 'Isolates bulk gross tumor mass (necrotic core + enhancing active tumor)',
       color: '#f59e0b',
       bgLight: '#fef3c7',
@@ -60,7 +68,7 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
     },
     {
       key: 'ET',
-      label: 'Enhancing Tumor (ET)',
+      label: 'ET (Enhancing)',
       description: 'Active angiogenic margin displaying hyper-intensity on post-contrast T1Gd',
       color: '#ef4444',
       bgLight: '#fee2e2',
@@ -141,19 +149,19 @@ export const ResultsDashboard: React.FC<ResultsDashboardProps> = ({
         </div>
       </div>
 
-      {/* Amber Plausibility Warning (if WT > 800 mL) */}
+      {/* Amber Plausibility Warning (if WT > 800 mL or regions within 5%) */}
       {isPlausibilityWarning && (
         <div className="bg-amber-50 border border-amber-300 rounded-2xl p-5 flex items-start gap-3.5 shadow-sm">
           <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="text-xs text-amber-900 leading-relaxed space-y-1">
             <p className="font-bold text-amber-950">Atypical Volumetric Plausibility Warning</p>
-            <p>
-              The calculated Whole Tumor volume ({wtVolume.toFixed(2)} mL) exceeds expected
-              pathological cranial boundaries (normal adult intracranial cavity volume is ~1400 mL).
+            <p className="text-amber-900 font-semibold">
+              Unusually large or implausible tumor volume. Verify input orientation, sequence
+              assignment and model status.
             </p>
-            <p className="text-amber-800">
-              Please inspect the MRI slices in the 3D Viewer to verify if non-brain background
-              tissue or un-stripped skull anatomy was segmented.
+            <p className="text-amber-800 text-[11px]">
+              Calculated Whole Tumor: {wtVolume.toFixed(2)} mL (cranial cavity threshold ~800 mL).
+              Please inspect the MRI slices in the 3D Viewer to verify matrix alignment and skull-strip boundaries.
             </p>
           </div>
         </div>

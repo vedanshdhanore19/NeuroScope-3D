@@ -81,15 +81,15 @@ function formatBytes(bytes: number): string {
 
 async function compressIfUncompressedNii(file: File): Promise<File> {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith('.nii') && !lower.endsWith('.nii.gz') && typeof CompressionStream !== 'undefined') {
-    try {
-      const stream = file.stream().pipeThrough(new CompressionStream('gzip'));
-      const blob = await new Response(stream).blob();
-      return new File([blob], `${file.name}.gz`, { type: 'application/gzip' });
-    } catch (e) {
-      console.warn('In-browser gzip compression failed, uploading raw file:', e);
-      return file;
+  if (lower.endsWith('.nii') && !lower.endsWith('.nii.gz')) {
+    if (typeof CompressionStream === 'undefined') {
+      throw new Error(
+        'In-browser gzip compression is not supported by your browser environment. Please provide a pre-compressed .nii.gz file.'
+      );
     }
+    const stream = file.stream().pipeThrough(new CompressionStream('gzip'));
+    const blob = await new Response(stream).blob();
+    return new File([blob], `${file.name}.gz`, { type: 'application/gzip' });
   }
   return file;
 }
@@ -109,6 +109,8 @@ export const StudyUpload: React.FC<StudyUploadProps> = ({ onValidationSuccess, o
   // MSD File State
   const [msdFile, setMsdFile] = useState<File | null>(null);
   const [msdExpertFile, setMsdExpertFile] = useState<File | null>(null);
+  const [isGzippingMsd, setIsGzippingMsd] = useState<boolean>(false);
+  const [isGzippingMsdExpert, setIsGzippingMsdExpert] = useState<boolean>(false);
 
   const [isValidating, setIsValidating] = useState<boolean>(false);
   const [validationPhase, setValidationPhase] = useState<string>('');
@@ -137,11 +139,20 @@ export const StudyUpload: React.FC<StudyUploadProps> = ({ onValidationSuccess, o
         ...prev,
         [seq]: { file: incomingFile, sizeFormatted: 'Compressing .nii → .nii.gz...', isGzipping: true },
       }));
-      const compressed = await compressIfUncompressedNii(incomingFile);
-      setFiles((prev) => ({
-        ...prev,
-        [seq]: { file: compressed, sizeFormatted: `${formatBytes(compressed.size)} (GZ)`, isGzipping: false },
-      }));
+      try {
+        const compressed = await compressIfUncompressedNii(incomingFile);
+        setFiles((prev) => ({
+          ...prev,
+          [seq]: { file: compressed, sizeFormatted: `${formatBytes(compressed.size)} (GZ)`, isGzipping: false },
+        }));
+      } catch (err: any) {
+        setFiles((prev) => ({
+          ...prev,
+          [seq]: { file: null, sizeFormatted: '', isGzipping: false },
+        }));
+        setGlobalError(err.message || 'Compression failed.');
+        onErrorToast?.(err.message || 'Compression failed.');
+      }
     } else {
       setFiles((prev) => ({
         ...prev,
@@ -154,12 +165,56 @@ export const StudyUpload: React.FC<StudyUploadProps> = ({ onValidationSuccess, o
     if (!incomingFile) return;
     const lower = incomingFile.name.toLowerCase();
     if (!lower.endsWith('.nii') && !lower.endsWith('.nii.gz')) {
-      setGlobalError('Only 4D NIfTI files (.nii or .nii.gz) are supported.');
+      const msg = 'Only 4D NIfTI files (.nii or .nii.gz) are supported.';
+      setGlobalError(msg);
+      onErrorToast?.(msg);
       return;
     }
     setGlobalError(null);
-    const readyFile = await compressIfUncompressedNii(incomingFile);
-    setMsdFile(readyFile);
+    setErrorCode(null);
+
+    if (lower.endsWith('.nii') && !lower.endsWith('.nii.gz')) {
+      setIsGzippingMsd(true);
+      try {
+        const readyFile = await compressIfUncompressedNii(incomingFile);
+        setMsdFile(readyFile);
+      } catch (err: any) {
+        setGlobalError(err.message || 'Compression failed.');
+        onErrorToast?.(err.message || 'Compression failed.');
+      } finally {
+        setIsGzippingMsd(false);
+      }
+    } else {
+      setMsdFile(incomingFile);
+    }
+  };
+
+  const handleMsdExpertFileChange = async (incomingFile: File | null) => {
+    if (!incomingFile) return;
+    const lower = incomingFile.name.toLowerCase();
+    if (!lower.endsWith('.nii') && !lower.endsWith('.nii.gz')) {
+      const msg = 'Only NIfTI files (.nii or .nii.gz) are supported.';
+      setGlobalError(msg);
+      onErrorToast?.(msg);
+      return;
+    }
+    setGlobalError(null);
+    setErrorCode(null);
+
+    if (lower.endsWith('.nii') && !lower.endsWith('.nii.gz')) {
+      setIsGzippingMsdExpert(true);
+      try {
+        const readyFile = await compressIfUncompressedNii(incomingFile);
+        setMsdExpertFile(readyFile);
+      } catch (err: any) {
+        setGlobalError(err.message || 'Compression failed.');
+        onErrorToast?.(err.message || 'Compression failed.');
+      } finally {
+        setIsGzippingMsdExpert(false);
+      }
+    } else {
+      setMsdExpertFile(incomingFile);
+    }
   };
 
   const handleRemoveBraTSFile = (seq: SequenceKey) => {
@@ -173,7 +228,7 @@ export const StudyUpload: React.FC<StudyUploadProps> = ({ onValidationSuccess, o
   };
 
   const isBraTSReady = files.t1.file && files.t1gd.file && files.t2.file && files.flair.file;
-  const isMsdReady = !!msdFile;
+  const isMsdReady = !!msdFile && !isGzippingMsd;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -443,7 +498,12 @@ export const StudyUpload: React.FC<StudyUploadProps> = ({ onValidationSuccess, o
                 </p>
               </div>
 
-              {msdFile ? (
+              {isGzippingMsd ? (
+                <div className="flex items-center gap-2.5 bg-sky-50 p-4 rounded-xl border border-sky-200 text-xs font-semibold text-sky-800">
+                  <RefreshCw className="w-4 h-4 text-cyan animate-spin" />
+                  <span>Compressing .nii → .nii.gz in browser via CompressionStream...</span>
+                </div>
+              ) : msdFile ? (
                 <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
                   <div className="flex items-center gap-2.5">
                     <FileCheck className="w-5 h-5 text-emerald-600" />
@@ -482,8 +542,8 @@ export const StudyUpload: React.FC<StudyUploadProps> = ({ onValidationSuccess, o
                     className="cursor-pointer flex flex-col items-center justify-center p-8 rounded-xl border-2 border-dashed border-slate-300 hover:border-cyan hover:bg-sky-50/50 transition-all text-center space-y-2"
                   >
                     <UploadCloud className="w-8 h-8 text-cyan" />
-                    <span className="text-xs font-bold text-navy">Select 4D Brain Volume (.nii.gz)</span>
-                    <span className="text-[11px] text-slate-400">Medical Segmentation Decathlon Task01 format</span>
+                    <span className="text-xs font-bold text-navy">Select 4D Brain Volume (.nii.gz or .nii)</span>
+                    <span className="text-[11px] text-slate-400">Medical Segmentation Decathlon Task01 format (auto-compressed if .nii)</span>
                   </label>
                 </div>
               )}
@@ -499,7 +559,12 @@ export const StudyUpload: React.FC<StudyUploadProps> = ({ onValidationSuccess, o
                 Supply the corresponding reference label map for automated Dice score and HD95 metrics.
               </p>
 
-              {msdExpertFile ? (
+              {isGzippingMsdExpert ? (
+                <div className="flex items-center gap-2.5 bg-purple-50 p-3 rounded-xl border border-purple-200 text-xs font-semibold text-purple-800">
+                  <RefreshCw className="w-4 h-4 text-purple-600 animate-spin" />
+                  <span>Compressing expert mask .nii → .nii.gz...</span>
+                </div>
+              ) : msdExpertFile ? (
                 <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
                   <div className="flex items-center gap-2.5">
                     <FileCheck className="w-5 h-5 text-purple-600" />
@@ -518,16 +583,24 @@ export const StudyUpload: React.FC<StudyUploadProps> = ({ onValidationSuccess, o
                   <input
                     type="file"
                     accept=".nii,.nii.gz"
-                    onChange={(e) => setMsdExpertFile(e.target.files?.[0] || null)}
+                    onChange={(e) => handleMsdExpertFileChange(e.target.files?.[0] || null)}
                     className="hidden"
                     id="msd-expert-input"
                   />
                   <label
                     htmlFor="msd-expert-input"
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (e.dataTransfer.files?.[0]) {
+                        handleMsdExpertFileChange(e.dataTransfer.files[0]);
+                      }
+                    }}
                     className="cursor-pointer flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-dashed border-slate-300 hover:border-purple-400 text-xs font-semibold text-slate-700 text-center"
                   >
                     <UploadCloud className="w-4 h-4 text-purple-500" />
-                    <span>Choose Optional Ground Truth Mask</span>
+                    <span>Choose Optional Ground Truth Mask (.nii / .nii.gz)</span>
                   </label>
                 </div>
               )}

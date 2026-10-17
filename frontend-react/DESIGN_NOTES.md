@@ -1,92 +1,117 @@
-# NeuroScope-3D Design Notes & Architecture
+# NeuroScope-3D — Frontend Architecture & Design Notes
 
 ## 1. Design System & Tokens
-- **Theme Palette:**
-  - Base background: `#0A0E17` (Deep dark medical navy/charcoal)
-  - Surface primary: `#0F1623`
-  - Surface elevated: `#151D2C`
-  - Subtle borders: `rgba(255, 255, 255, 0.08)`
-  - Accents: Cyan `#22D3EE` / `#06B6D4`, Blue `#3B82F6`
-  - Tumor semantic subregions:
-    - **Enhancing Tumor (ET):** Coral/Red `#EF4444`
-    - **Necrotic Core (NCR):** Amber `#F59E0B`
-    - **Peritumoral Edema (ED):** Emerald `#10B981`
-    - **Whole Tumor (WT):** Pink/Magenta `#EC4899`
-    - **Tumor Core (TC):** Orange `#F97316`
-- **Typography:**
-  - Self-hosted variable font `@fontsource-variable/inter` for clean UI readability.
-  - JetBrains Mono for DICOM tags, dimensions, SHA-256 hashes, and numeric metrics.
-- **Components & Primitives (`src/components/ui/`):**
-  - `Button`: Standardized variants (primary, secondary, ghost, danger) and sizes (sm, md, lg).
-  - `Card`: Workstation panels with customizable surface elevation.
-  - `Badge`: Status tags (cyan, emerald, amber, red, neutral).
-  - `MetricCard`: Clinical metric readout cards with value, unit, and tooltip explanation.
-  - `SegmentedControl`: Clean toggle control for modality and axis selection.
-  - `StatusPill`: Real-time backend connectivity and inference readiness indicator.
+
+The modernized frontend adopts a **Light Clinical Research Workstation** design system with high-contrast, deeply shaded dark viewports for radiological image clarity.
+
+### Typography
+- **Primary / UI Sans**: `Plus Jakarta Sans Variable` (`@fontsource-variable/plus-jakarta-sans`) for crisp clinical typography, clean tabular metadata, and high readability.
+- **Monospace / Numerical Data**: `JetBrains Mono` (`@fontsource/jetbrains-mono`) for patient coordinates, slice indices, voxel counts, volumetric readings (mL), and SHA-256 provenance hashes.
+
+### Color Tokens
+- **Navy Core**: `#0b192c` (primary heading & brand accents), `#07101e` (dark surface), `#1e293b` (slate border accents).
+- **Clinical Cyan**: `#0284c7` (primary interactive focus), `#38bdf8` (cyan light / axial plane indicator).
+- **Clinical Mint**: `#00d690` (accent & status online indicator), `#059669` (coronal plane indicator).
+- **Imaging Viewport**: `#0a0f1d` (deep dark WebGL canvas & slice viewport background), `#111827` (slate dark panel frame).
+- **Background**: `#f4f7fb` with subtle medical radial gradient accents (`rgba(2, 132, 199, 0.07)` and `rgba(0, 214, 144, 0.05)`).
+
+### BraTS Multi-Contrast & Tumor Sub-Region Tokens
+Labels strictly adhere to the BraTS protocol with standardized union semantics:
+- **WT (Whole tumor)**: `#00d690` (Mint Green) — union of labels 1, 2, and 4 (Necrotic Core + Peritumoral Edema + Enhancing Active Tumor).
+- **TC (Tumor core)**: `#f59e0b` (Amber) — union of labels 1 and 4 (Gross tumor mass excluding peritumoral edema).
+- **ET (Enhancing)**: `#ef4444` (Coral Red) — label 4 alone (Angiogenic hyper-intense rim disrupting blood-brain barrier).
+
+### Elevation & Radii
+- **Radii**: Smooth curved cards (`rounded-2xl` / `20px`, pills `rounded-full`, badges `rounded-xl`).
+- **Shadows**: Soft clinical card shadows (`0 10px 25px -5px rgba(15, 30, 60, 0.06)`), mint glow for primary calls-to-action (`0 8px 24px -4px rgba(0, 214, 144, 0.35)`).
 
 ---
 
-## 2. Component Structure & Architecture
+## 2. Component Map
 
 ```
-src/
-├── App.tsx                          # Header shell + navigation + health polling (15s) + disclaimer footer
-├── index.css                        # Design system CSS variables, scrollbars, and glassmorphism
+frontend-react/src/
+├── App.tsx                      # Top-level orchestrator, tab router, auto-navigation, health interval, study resume logic
+├── index.css                    # Tailwind directives, clinical variables, custom scrollbars
+├── types/api.ts                 # Real backend API TypeScript models, volumes, metrics, volume-info, mesh response
+├── services/api.ts              # Axios HTTP client with relative '/api' Vite proxy to 127.0.0.1:8001
+├── store/studyStore.ts          # Zustand store with persistent storage and safe error wrapping
 ├── components/
-│   ├── ui/                          # Reusable UI primitives
-│   │   ├── Button.tsx
-│   │   ├── Card.tsx
-│   │   ├── Badge.tsx
-│   │   ├── MetricCard.tsx
-│   │   ├── SegmentedControl.tsx
-│   │   └── StatusPill.tsx
+│   ├── Navbar.tsx               # Sticky header with interactive latency pill, MPR status indicator, mobile drawer
+│   ├── Footer.tsx               # Institutional footer with academic disclaimer & protocol specifications
 │   ├── landing/
-│   │   ├── LandingHero.tsx          # 5-second value proposition, CTAs, features, stepper, preview
-│   │   └── HolographicBrain.tsx     # Lazy-loaded Three.js brain rotating smoothly on fixed Y-axis
+│   │   ├── HeroSection.tsx      # Landing hero with sample preview, institutional sign-in card, and 3D brain
+│   │   └── HolographicBrain.tsx # Lazy-loaded R3F procedural brain hemisphere wireframe rotating on fixed Y axis
 │   ├── auth/
-│   │   ├── InlineAuthCard.tsx       # Embedded sign-in card with honest unconfigured server notices
-│   │   ├── LoginPage.tsx            # Dedicated NeuroScan view with 3D canvas and workspace bypass
-│   │   └── BrainVisualization.tsx   # Orbiting wireframe sphere for auth view
+│   │   └── InlineAuthCard.tsx   # Institutional credential form with honest feedback & demo passkey helpers
 │   ├── upload/
-│   │   └── UploadWorkspace.tsx      # BraTS and MSD upload rail with drag-drop and validation cards
+│   │   └── StudyUpload.tsx      # BraTS 4-sequence and MSD Task01 4D upload tabs with client-side gzip compression
 │   ├── viewer/
-│   │   └── MultiPlanarViewer.tsx    # 2D Orthogonal slice viewer (Axial/Coronal/Sagittal) + opacity slider
-│   ├── three/
-│   │   └── Patient3DViewer.tsx      # 3D spatial viewer with GizmoViewport, camera reset, subregion toggles
-│   └── analysis/
-│       └── VolumetricsPanel.tsx     # Physical volumes (mL), derived diameter, Recharts distribution, metrics
-├── services/
-│   ├── api.ts                       # Axios client connected to FastAPI backend (UNTOUCHED)
-│   └── authService.ts               # Typed interface modeling unconfigured backend state
-├── store/
-│   └── studyStore.ts                # Zustand central store for active run, views, and 3D display options
-└── types/
-    └── api.ts                       # Data models matching FastAPI backend (UNTOUCHED)
+│   │   ├── OrthogonalViewer.tsx # 3-panel MPR viewer (Axial, Coronal, Sagittal) with crosshairs, windowing, slice scrubbers
+│   │   └── MeshViewer3D.tsx     # Real Marching Cubes 3D surface viewer with nested translucency & Three.js cleanup
+│   ├── results/
+│   │   └── ResultsDashboard.tsx # Physical volumetrics (mL, mm diameter), plausibility guard (>800 mL / 5%), Dice metrics table
+│   ├── reports/
+│   │   └── ReportExport.tsx     # PDF report download, compressed NIfTI export, software guidance (3D Slicer / ITK-SNAP)
+│   └── ui/
+│       ├── Badge.tsx            # Standardized clinical status badge
+│       └── Toast.tsx            # Accessible notification toast system
 ```
 
 ---
 
-## 3. Unchanged Protection Boundaries
-- `backend/`: **100% untouched** (FastAPI routes, SegResNet weights, volumetrics, and validators).
-- `frontend/`: **100% untouched** (original static HTML/JS preserved).
-- `tests/`: Automated pytest suite preserved.
-- `src/services/api.ts` & `src/types/api.ts`: Kept strictly synchronized with backend contracts.
-- `vite.config.ts`: Proxy to `http://127.0.0.1:8001` preserved.
+## 3. Backend API Additions (Additive Only)
+
+To power high-fidelity radiological exploration without modifying existing inference or database pipelines, additive endpoints were implemented in `backend/app/visualization.py` and routed via `backend/main.py`:
+
+1. **`GET /api/v1/jobs/{id}/volume-info`**:
+   - Reads the NIfTI headers (`shape`, `zooms`, `affine`) from the validated study directory.
+   - Computes default slice indices (center of volume) and slice limits for Axial ($z$), Coronal ($y$), and Sagittal ($x$) viewports.
+   - Lists available multi-contrast sequences (`t1`, `t1gd`, `t2`, `flair`).
+
+2. **`GET /api/v1/jobs/{id}/slice?modality=...&plane=...&index=...&regions=...&brightness=...&contrast=...`**:
+   - Slices the 3D anatomical volume dynamically on-demand along the requested plane.
+   - Applies interactive windowing (brightness multiplier & contrast curve).
+   - If `regions` contains active tumor masks (`WT`, `TC`, `ET`), blends colored overlays into an RGBA slice using proper BraTS union semantics (`WT` Mint `#00D690`, `TC` Amber `#F59E0B`, `ET` Coral `#EF4444`).
+   - Streams PNG bytes directly with fast in-memory encoding.
+
+3. **`GET /api/v1/jobs/{id}/mesh?region=WT|TC|ET`**:
+   - Loads the predicted NIfTI segmentation mask from the study job folder.
+   - Extracts the 3D isosurface mesh using scikit-image's `marching_cubes` at threshold 0.5.
+   - Transforms voxel vertices into physical patient coordinates ($x, y, z$ in millimeters) via the affine transformation matrix and centers vertices around the lesion centroid.
+   - Returns indexed geometry: `vertices` (flat Float32 array), `faces` (flat Int32 array), `normals` (vertex normals for smooth lighting), and counts (`num_vertices`, `num_faces`).
 
 ---
 
-## 4. Backend Capabilities & Unsupported Feature Roadmap
+## 4. What Was Ported vs. Deliberately NOT Ported
 
-### Provided by Backend:
-- Whole Tumor, Tumor Core, Enhancing Tumor, Edema, and Necrotic Core physical volumes ($V = N \times s_x s_y s_z / 1000$ mL).
-- Comparative metrics against expert masks: Dice Score, Sensitivity, Specificity, Hausdorff Distance 95 (HD95 mm).
-- 2D Orthogonal slice generation with color overlays on `t1`, `t1gd`, `t2`, and `flair`.
-- Multi-parametric validation for BraTS (4 files) and MSD Task01 (4D volume).
-- Automated PDF report dossier and NIfTI prediction mask downloads.
+### Ported from Reference / Brief:
+- **Clean clinical palette**: Light mode with dark viewports (`#0a0f1d`), soft elevation, and crisp typography.
+- **Interactive MPR Viewer**: Synchronized 3-plane views with crosshairs, slice sliders, brightness/contrast adjustments, and sequence switcher.
+- **Client-Side Gzip**: In-browser compression of `.nii` files to `.nii.gz` via `CompressionStream('gzip')` to prevent backend rejection.
+- **3D Marching Cubes Surface**: Real BufferGeometry rendered via Three.js with nested translucency (`depthWrite: false`) for internal tumor core visibility.
+- **Resumable Studies**: State persisted via Zustand with silent 404 cleanup.
+- **Volumetric Plausibility Guard**: Amber alert if $V_{WT} > 800$ mL or sub-region volumes are within 5% of each other.
+- **Holographic Landing Brain**: Continuous rotation on fixed vertical axis with no pitch wobble, no user dragging, lazy-loaded canvas, and `dpr` capped at `[1, 1.75]`.
 
-### Intentionally Not Displayed in Real Scans (Backend Limitations):
-1. **Measured Caliper Tumor Diameter:** The backend computes physical volumes, not max caliper caliper spans. The UI exposes **Equivalent Spherical Diameter (derived)** ($d = (6V/\pi)^{1/3}$ mm) with a clear tooltip that it is a mathematical volume equivalent.
-2. **Confidence Percentage:** The backend does not output Bayesian or softmax confidence. The UI never shows fabricated confidence; it displays the real **Dice Score** when expert masks exist, or inference runtime.
-3. **Anatomical Lobe/Region:** The model segments tumor subregions, not anatomical cerebral lobes. No anatomical regions are fabricated.
-4. **Continuous Surface Raymarched 3D Mesh:** The backend does not serve GLTF/OBJ meshes. The 3D viewer renders patient-specific coordinate bounding grids and subregion volume bodies derived from real mL values, clearly documented with an "About this view" popover.
-5. **Server User Directory & OAuth:** The backend runs in academic mode. The UI presents an honest notice on sign-in attempts and routes directly to the open academic workspace.
+### Deliberately NOT Ported (Preserving Truth & Robustness):
+- **Mock Inference with Random Noise**: The reference app simulated segmentation using synthetic random seeds; NeuroScope-3D uses the real MONAI SegResNet BraTS model weights (`860ccb3f...` sha256) running real inference.
+- **Synthetic Sample-Data Generator**: Avoided generating mock patient datasets on the client; all patient studies are authenticated against backend jobs.
+- **Hardcoded Port 8000**: All frontend API requests use relative `/api` paths routed cleanly via Vite proxy to the verified backend on port 8001.
+- **"WT = Edema" Nomenclature**: BraTS defines WT as Whole Tumor (label 1 + 2 + 4), NOT isolated edema. The UI strictly labels WT as `"WT (Whole tumor)"` to prevent clinical confusion.
+- **Fabricated Metrics**: The ground-truth metrics table is only displayed if an expert reference mask is provided during upload; no metrics are invented.
+
+---
+
+## 5. Verified Limitations & Architectural Notes
+
+1. **Authentication Mode**:
+   - The sign-in card provides an institutional access gate (`InlineAuthCard.tsx`) with predefined researcher accounts (`researcher@neuroscope.org` / `admin@neuroscope.org`). It does not issue backend JWT tokens because the verified backend does not enforce authentication on inference endpoints.
+2. **Derived Physical Diameter**:
+   - The backend computes voxel counts and physical volume in mL ($V$). The spherical equivalent diameter is derived on the client using the standard geometric relationship:
+     $$D = \left(\frac{6V}{\pi}\right)^{1/3} \times 10\text{ mm}$$
+   - This provides an intuitive physical reference alongside exact voxel metrics.
+3. **Inference Latency on CPU**:
+   - The MONAI SegResNet sliding-window inference takes ~15–35 seconds on a multi-core CPU. The UI provides an interactive timer (`Segmenting (Xs)...`) and auto-navigates to the MRI Viewer upon completion.
+4. **Browser Compatibility**:
+   - Client-side gzip compression relies on the web-standard `CompressionStream` API. If opened in legacy environments without `CompressionStream`, the UI flags this capability gracefully and advises uploading pre-compressed `.nii.gz` files.

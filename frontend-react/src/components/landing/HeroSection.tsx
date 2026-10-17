@@ -181,7 +181,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           {studyDetails?.volumes ? (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-5">
               <div className="bg-slate-50 p-4 rounded-xl border-l-4 border-l-tumor-wt">
-                <span className="text-xs font-semibold text-slate-500 block">Whole Tumor (WT)</span>
+                <span className="text-xs font-semibold text-slate-500 block">WT (Whole tumor)</span>
                 <span className="text-2xl font-extrabold text-navy mt-1 block">
                   {studyDetails.volumes.WT?.volume_ml.toFixed(2) ?? '0.00'}{' '}
                   <span className="text-xs text-slate-500 font-normal">mL</span>
@@ -192,7 +192,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               </div>
 
               <div className="bg-slate-50 p-4 rounded-xl border-l-4 border-l-tumor-tc">
-                <span className="text-xs font-semibold text-slate-500 block">Tumor Core (TC)</span>
+                <span className="text-xs font-semibold text-slate-500 block">TC (Tumor core)</span>
                 <span className="text-2xl font-extrabold text-navy mt-1 block">
                   {studyDetails.volumes.TC?.volume_ml.toFixed(2) ?? '0.00'}{' '}
                   <span className="text-xs text-slate-500 font-normal">mL</span>
@@ -203,7 +203,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               </div>
 
               <div className="bg-slate-50 p-4 rounded-xl border-l-4 border-l-tumor-et">
-                <span className="text-xs font-semibold text-slate-500 block">Enhancing Tumor (ET)</span>
+                <span className="text-xs font-semibold text-slate-500 block">ET (Enhancing)</span>
                 <span className="text-2xl font-extrabold text-navy mt-1 block">
                   {studyDetails.volumes.ET?.volume_ml.toFixed(2) ?? '0.00'}{' '}
                   <span className="text-xs text-slate-500 font-normal">mL</span>
@@ -277,7 +277,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                   <ArrowUpRight className="w-4 h-4" />
                 </span>
               </div>
-              <h3 className="text-lg font-extrabold text-navy">Whole Tumor (WT)</h3>
+              <h3 className="text-lg font-extrabold text-navy">WT (Whole tumor)</h3>
               <p className="text-xs text-slate-600 leading-relaxed">
                 Encompasses the entire pathological lesion: necrotic core (NCR), peritumoral
                 vasogenic edema (ED), and active enhancing tumor (ET).
@@ -300,7 +300,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                   <ArrowUpRight className="w-4 h-4" />
                 </span>
               </div>
-              <h3 className="text-lg font-extrabold text-navy">Tumor Core (TC)</h3>
+              <h3 className="text-lg font-extrabold text-navy">TC (Tumor core)</h3>
               <p className="text-xs text-slate-600 leading-relaxed">
                 Isolates the gross tumor mass, combining necrotic/non-enhancing core components and
                 the hyper-intense angiogenic rim (excluding peritumoral edema).
@@ -323,7 +323,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                   <ArrowUpRight className="w-4 h-4" />
                 </span>
               </div>
-              <h3 className="text-lg font-extrabold text-navy">Enhancing Tumor (ET)</h3>
+              <h3 className="text-lg font-extrabold text-navy">ET (Enhancing)</h3>
               <p className="text-xs text-slate-600 leading-relaxed">
                 Captures biologically active tumor borders with blood-brain barrier disruption and
                 gadolinium contrast hyper-accumulation on T1Gd sequences.
@@ -403,7 +403,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             <div className="lg:col-span-5 space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <span className="text-xs text-slate-500 block font-medium">Whole Tumor (WT)</span>
+                  <span className="text-xs text-slate-500 block font-medium">WT (Whole tumor)</span>
                   <span className="text-2xl font-extrabold text-navy mt-1 block">
                     24.60 <span className="text-xs text-slate-500 font-normal">mL</span>
                   </span>
@@ -423,7 +423,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                 <div className="flex justify-between items-center text-slate-700">
                   <span className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-tumor-et" />
-                    <span>Enhancing Tumor (ET)</span>
+                    <span>ET (Enhancing)</span>
                   </span>
                   <span className="font-bold text-navy">6.42 mL</span>
                 </div>
