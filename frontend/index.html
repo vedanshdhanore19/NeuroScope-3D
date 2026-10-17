@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NeuroScope 3D — MRI Brain Tumor Segmentation & Volumetrics</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Academic Research Prototype Disclaimer Header -->
+  <header class="disclaimer-bar">
+    <div class="container bar-content">
+      <span class="badge badge-warning">RESEARCH & TEACHING PROTOTYPE ONLY</span>
+      <span class="bar-text">Not a medical device. Not cleared by FDA/CE for clinical diagnosis or treatment planning. All results must be validated by a qualified radiologist.</span>
+    </div>
+  </header>
+
+  <!-- Top Navigation -->
+  <nav class="navbar">
+    <div class="container nav-content">
+      <div class="brand">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M12 3v18"/>
+          <path d="M3 12h18"/>
+          <circle cx="12" cy="12" r="5" stroke-dasharray="2 2"/>
+        </svg>
+        <div>
+          <h1 class="brand-title">NeuroScope 3D</h1>
+          <span class="brand-sub">MONAI SegResNet Pipeline & Volumetrics</span>
+        </div>
+      </div>
+      <div class="model-badge" id="modelStatusBadge">
+        <span class="status-dot dot-pending" id="statusDot"></span>
+        <span id="statusText">Checking Model...</span>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container main-layout">
+    <!-- Model Provenance Drawer -->
+    <section class="card provenance-card">
+      <div class="card-header">
+        <h2>Verified Model Provenance & Status</h2>
+        <button class="btn btn-sm btn-outline" id="refreshStatusBtn">Refresh Status</button>
+      </div>
+      <div class="provenance-grid" id="provenanceGrid">
+        <div class="prov-item">
+          <span class="prov-label">Bundle:</span>
+          <span class="prov-value" id="provBundle">—</span>
+        </div>
+        <div class="prov-item">
+          <span class="prov-label">Architecture:</span>
+          <span class="prov-value" id="provArch">—</span>
+        </div>
+        <div class="prov-item">
+          <span class="prov-label">Checkpoint SHA-256:</span>
+          <span class="prov-value mono" id="provHash">—</span>
+        </div>
+        <div class="prov-item">
+          <span class="prov-label">Execution Device:</span>
+          <span class="prov-value" id="provDevice">—</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Upload & Study Validation -->
+    <section class="card upload-card">
+      <div class="card-header">
+        <h2>1. Upload MRI Study Set</h2>
+        <div class="tab-group">
+          <button class="tab-btn active" id="tabBrats">4-Modality BraTS</button>
+          <button class="tab-btn" id="tabMsd">MSD Task01 (4D NIfTI)</button>
+        </div>
+      </div>
+
+      <!-- Mode A: BraTS 4-file upload -->
+      <form id="formBrats" class="upload-form">
+        <div class="file-grid">
+          <div class="file-input-group">
+            <label for="fileT1">T1 Weighted (t1) <span class="required">*</span></label>
+            <input type="file" id="fileT1" accept=".nii,.nii.gz" required>
+            <span class="help-text">Baseline anatomical reference</span>
+          </div>
+          <div class="file-input-group">
+            <label for="fileT1gd">T1 Contrast-Enhanced (t1gd/t1ce) <span class="required">*</span></label>
+            <input type="file" id="fileT1gd" accept=".nii,.nii.gz" required>
+            <span class="help-text">Channel 0: Enhancing tumor</span>
+          </div>
+          <div class="file-input-group">
+            <label for="fileT2">T2 Weighted (t2) <span class="required">*</span></label>
+            <input type="file" id="fileT2" accept=".nii,.nii.gz" required>
+            <span class="help-text">Hyperintense edema boundary</span>
+          </div>
+          <div class="file-input-group">
+            <label for="fileFlair">FLAIR (flair) <span class="required">*</span></label>
+            <input type="file" id="fileFlair" accept=".nii,.nii.gz" required>
+            <span class="help-text">Suppressed fluid / whole tumor</span>
+          </div>
+        </div>
+        <div class="file-input-group expert-group">
+          <label for="fileExpertBrats">Optional Expert Reference Mask (Ground Truth)</label>
+          <input type="file" id="fileExpertBrats" accept=".nii,.nii.gz">
+          <span class="help-text">Optional 3D NIfTI with labels 1 (NCR), 2 (ED), 4 (ET) for Dice/HD95 evaluation</span>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="validateBratsBtn">Validate Study Set</button>
+        </div>
+      </form>
+
+      <!-- Mode B: MSD 4D upload -->
+      <form id="formMsd" class="upload-form hidden">
+        <div class="file-grid single-col">
+          <div class="file-input-group">
+            <label for="fileMsd4d">MSD Task01 4D Brain Volume <span class="required">*</span></label>
+            <input type="file" id="fileMsd4d" accept=".nii,.nii.gz" required>
+            <span class="help-text">Single 4D NIfTI (shape [X, Y, Z, 4]: 0=FLAIR, 1=T1, 2=T1gd, 3=T2)</span>
+          </div>
+          <div class="file-input-group expert-group">
+            <label for="fileExpertMsd">Optional MSD Reference Label Map</label>
+            <input type="file" id="fileExpertMsd" accept=".nii,.nii.gz">
+            <span class="help-text">MSD labels (1=edema, 2=non-enhancing, 3=enhancing) are mapped automatically to BraTS convention</span>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="validateMsdBtn">Unpack & Validate MSD Volume</button>
+        </div>
+      </form>
+
+      <!-- Validation Status Result Box -->
+      <div id="validationResult" class="result-box hidden"></div>
+    </section>
+
+    <!-- Inference Execution Section -->
+    <section class="card inference-card hidden" id="inferenceSection">
+      <div class="card-header">
+        <h2>2. MONAI SegResNet Model Inference</h2>
+        <button class="btn btn-success" id="runInferenceBtn">
+          <span id="inferBtnText">Run Tumor Segmentation</span>
+        </button>
+      </div>
+      <div id="inferenceProgress" class="progress-box hidden">
+        <div class="spinner"></div>
+        <span id="inferStatusText">Running sliding-window inference with MONAI SegResNet...</span>
+      </div>
+      <div id="inferenceError" class="alert alert-danger hidden"></div>
+    </section>
+
+    <!-- 2D Slice Viewer & Segmentation Overlays -->
+    <section class="card viewer-card hidden" id="viewerSection">
+      <div class="card-header">
+        <h2>3. 2D Slice Navigation & Segmentation Overlays</h2>
+        <div class="viewer-controls">
+          <label>View Axis:
+            <select id="selectAxis">
+              <option value="2" selected>Axial (Z)</option>
+              <option value="1">Coronal (Y)</option>
+              <option value="0">Sagittal (X)</option>
+            </select>
+          </label>
+          <label>Modality:
+            <select id="selectModality">
+              <option value="t1">T1</option>
+              <option value="t1gd" selected>T1Gd (T1ce)</option>
+              <option value="t2">T2</option>
+              <option value="flair">FLAIR</option>
+              <option value="prediction">Prediction Only</option>
+            </select>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="checkOverlay" checked> Overlay Mask
+          </label>
+          <label>Opacity:
+            <input type="range" id="sliderAlpha" min="0.1" max="1.0" step="0.05" value="0.5">
+          </label>
+        </div>
+      </div>
+
+      <div class="viewer-container">
+        <div class="slice-display">
+          <img id="sliceImg" src="" alt="MRI Slice View">
+        </div>
+        <div class="slice-scrubber">
+          <input type="range" id="sliceSlider" min="0" max="154" value="77">
+          <div class="slice-info">
+            <span>Slice: <strong id="sliceIdxLabel">77</strong> / <span id="sliceMaxLabel">154</span></span>
+          </div>
+        </div>
+        <div class="legend-box">
+          <div class="legend-item"><span class="color-chip chip-et"></span> Enhancing Tumor (ET) [Label 4]</div>
+          <div class="legend-item"><span class="color-chip chip-ncr"></span> Necrotic / Non-enhancing Core (NCR) [Label 1]</div>
+          <div class="legend-item"><span class="color-chip chip-ed"></span> Peritumoral Edema (ED) [Label 2]</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Volumetrics & Evaluation Metrics -->
+    <section class="card results-card hidden" id="resultsSection">
+      <div class="card-header">
+        <h2>4. Physical Volumetrics & Reference Evaluation</h2>
+        <div class="download-actions">
+          <a class="btn btn-outline" id="downloadNiftiBtn" href="#" download>Download Prediction (.nii.gz)</a>
+          <a class="btn btn-primary" id="downloadPdfBtn" href="#" target="_blank">Download PDF Report</a>
+        </div>
+      </div>
+
+      <div class="tables-grid">
+        <div class="table-container">
+          <h3>Calculated Physical Volumetrics (mL)</h3>
+          <p class="table-subtitle">Formula: V = N<sub>voxels</sub> × (s<sub>x</sub> · s<sub>y</sub> · s<sub>z</sub>) / 1000</p>
+          <table class="data-table" id="volumetricsTable">
+            <thead>
+              <tr>
+                <th>Region</th>
+                <th>Description</th>
+                <th>Voxel Count</th>
+                <th>Volume (mL)</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="table-container" id="metricsContainer">
+          <h3>Expert Reference Evaluation</h3>
+          <p class="table-subtitle">Evaluated against the uploaded ground truth mask.</p>
+          <table class="data-table" id="metricsTable">
+            <thead>
+              <tr>
+                <th>Region</th>
+                <th>Dice Similarity (DSC)</th>
+                <th>Sensitivity (Recall)</th>
+                <th>HD95 (mm)</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-content">
+      <p>NeuroScope 3D — Academic Research & Teaching Prototype</p>
+      <p class="footer-sub">MONAI Framework &bull; PyTorch &bull; Medical Segmentation Decathlon / BraTS Compatible</p>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

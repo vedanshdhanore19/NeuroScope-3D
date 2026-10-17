@@ -1,106 +1,214 @@
-"""
-MONAI Model Inference Engine for NeuroScope 3D.
-Runs SegResNet inference on T1Gd, T1, T2, FLAIR modalities and remaps outputs to BraTS codes.
-"""
-
+"""MONAI inference engine for NeuroScope 3D."""
+import hashlib
+import os
+import random
 import time
-from typing import Dict, Tuple
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+
 import nibabel as nib
 import numpy as np
 import torch
+from nibabel.processing import resample_from_to, resample_to_output
 
-from .config import LABEL_ED, LABEL_ET, LABEL_NCR
+from .config import BASE_DIR, LABEL_ED, LABEL_ET, LABEL_NCR
 
 _MODEL_CACHE = None
 _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEFAULT_BUNDLE_WEIGHTS = BASE_DIR / "app" / "models" / "brats_mri_segmentation" / "brats_mri_segmentation" / "models" / "model.pt"
 
 
-def load_monai_model():
-    """Loads MONAI SegResNet pretrained model bundle."""
+def _set_deterministic() -> None:
+    """Configure reproducibility when explicitly requested; fast inference is the default."""
+    seed = int(os.getenv("NEUROSCOPE_SEED", "0"))
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if os.getenv("NEUROSCOPE_DETERMINISTIC", "0") == "1":
+        torch.use_deterministic_algorithms(True, warn_only=True)
+        if hasattr(torch.backends, "cudnn"):
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+    elif hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.benchmark = True
+
+
+def resolve_model_checkpoint_path() -> Optional[Path]:
+    env_path = os.getenv("NEUROSCOPE_MODEL_WEIGHTS", "").strip()
+    if env_path:
+        p = Path(env_path).expanduser()
+        if p.is_file():
+            return p
+    if DEFAULT_BUNDLE_WEIGHTS.is_file():
+        return DEFAULT_BUNDLE_WEIGHTS
+    return None
+
+
+def get_model_status() -> Dict[str, object]:
+    resolved = resolve_model_checkpoint_path()
+    file_exists = resolved is not None and resolved.is_file()
+    sha256 = None
+    if file_exists:
+        try:
+            h = hashlib.sha256()
+            with open(resolved, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            sha256 = h.hexdigest()
+        except Exception:
+            sha256 = "unreadable"
+    configured_path = os.getenv("NEUROSCOPE_MODEL_WEIGHTS", "").strip()
+    return {
+        "service_online": True,
+        "model_configured": bool(configured_path or (resolved and resolved.is_file())),
+        "checkpoint_path": str(resolved) if resolved else (configured_path or None),
+        "checkpoint_exists": file_exists,
+        "checkpoint_sha256": sha256,
+        "model_loaded": _MODEL_CACHE is not None,
+        "ready_for_inference": file_exists,
+        "bundle_name": "brats_mri_segmentation",
+        "bundle_version": "0.5.4",
+        "architecture": "SegResNet",
+        "device": str(_DEVICE),
+        "input_channels": 4,
+        "channel_order": ["t1gd (T1c)", "t1", "t2", "flair"],
+        "output_channels": 3,
+        "output_classes": ["TC (Tumor Core)", "WT (Whole Tumor)", "ET (Enhancing Tumor)"],
+    }
+
+
+def load_monai_model(force_reload: bool = False):
     global _MODEL_CACHE
-    if _MODEL_CACHE is not None:
+    if _MODEL_CACHE is not None and not force_reload:
         return _MODEL_CACHE
-
+    checkpoint_path = resolve_model_checkpoint_path()
+    if checkpoint_path is None or not checkpoint_path.is_file():
+        raise RuntimeError("Trained model weights are not available. Set NEUROSCOPE_MODEL_WEIGHTS to a verified compatible checkpoint or ensure the official MONAI bundle model.pt is present. No prediction was generated.")
     try:
         from monai.networks.nets import SegResNet
-        model = SegResNet(
-            spatial_dims=3,
-            in_channels=4,
-            out_channels=3,
-            init_filters=16,
-            blocks_down=[1, 2, 2, 4],
-            blocks_up=[1, 1, 1],
-        ).to(_DEVICE)
-
+        model = SegResNet(spatial_dims=3, in_channels=4, out_channels=3, init_filters=16, blocks_down=[1, 2, 2, 4], blocks_up=[1, 1, 1], dropout_prob=0.2).to(_DEVICE)
+        checkpoint = torch.load(str(checkpoint_path), map_location=_DEVICE)
+        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+        elif isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
+        else:
+            state_dict = checkpoint
+        if not isinstance(state_dict, dict):
+            raise ValueError("Checkpoint does not contain a state dictionary.")
+        state_dict = {key.removeprefix("module."): value for key, value in state_dict.items()}
+        model.load_state_dict(state_dict, strict=True)
         model.eval()
         _MODEL_CACHE = model
         return model
     except Exception as exc:
-        raise RuntimeError(f"Failed to initialize MONAI SegResNet model: {str(exc)}")
+        raise RuntimeError(f"Could not load the configured checkpoint into the SegResNet architecture. Confirm its architecture and label conventions. Details: {exc}") from exc
 
 
 def convert_nested_masks_to_brats_codes(tc_mask: np.ndarray, wt_mask: np.ndarray, et_mask: np.ndarray) -> np.ndarray:
-    """Converts MONAI nested outputs (TC, WT, ET) into BraTS 2021 codes (1, 2, 4)."""
+    wt_mask = np.asarray(wt_mask, dtype=bool)
+    tc_mask = np.asarray(tc_mask, dtype=bool) & wt_mask
+    et_mask = np.asarray(et_mask, dtype=bool) & tc_mask
     brats_map = np.zeros(wt_mask.shape, dtype=np.int16)
-
-    ncr_mask = np.logical_and(tc_mask, np.logical_not(et_mask))
-    ed_mask = np.logical_and(wt_mask, np.logical_not(tc_mask))
-
-    brats_map[ed_mask] = LABEL_ED    # 2
-    brats_map[ncr_mask] = LABEL_NCR  # 1
-    brats_map[et_mask] = LABEL_ET    # 4
-
+    brats_map[wt_mask & ~tc_mask] = LABEL_ED
+    brats_map[tc_mask & ~et_mask] = LABEL_NCR
+    brats_map[et_mask] = LABEL_ET
     return brats_map
 
 
+def _canonical_one_mm_images(images: Dict[str, nib.Nifti1Image]) -> Dict[str, nib.Nifti1Image]:
+    canonical = {key: nib.as_closest_canonical(img) for key, img in images.items()}
+    reference = resample_to_output(canonical["t1"], voxel_sizes=(1.0, 1.0, 1.0), order=3)
+    result = {"t1": reference}
+    for key, image in canonical.items():
+        if key != "t1":
+            result[key] = resample_from_to(image, reference, order=3)
+    return result
+
+
+def _restore_prediction_to_original_grid(canonical_prediction: np.ndarray, canonical_affine: np.ndarray, reference_img: nib.Nifti1Image) -> np.ndarray:
+    prediction_img = nib.Nifti1Image(canonical_prediction.astype(np.int16), canonical_affine)
+    restored = resample_from_to(prediction_img, (reference_img.shape[:3], reference_img.affine), order=0)
+    return np.rint(restored.get_fdata(dtype=np.float32)).astype(np.int16)
+
+
+def _foreground_crop(data: np.ndarray, margin: int = 8) -> Tuple[Tuple[slice, slice, slice], np.ndarray]:
+    """Find a conservative foreground bounding box to avoid running the model on zero background."""
+    positive = data > 0
+    coords = np.argwhere(positive)
+    if coords.size == 0:
+        return (slice(0, data.shape[0]), slice(0, data.shape[1]), slice(0, data.shape[2])), np.zeros(3, dtype=int)
+    lo = np.maximum(coords.min(axis=0) - margin, 0)
+    hi = np.minimum(coords.max(axis=0) + margin + 1, np.asarray(data.shape))
+    slices = tuple(slice(int(lo[i]), int(hi[i])) for i in range(3))
+    return slices, lo.astype(int)
+
+
 def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np.ndarray, float]:
-    """Executes end-to-end model inference."""
+    """Run SegResNet with foreground cropping, low-overlap windows and CUDA mixed precision."""
     start_time = time.time()
-
-    t1gd_img = nib.load(file_paths["t1gd"])
-    t1_img = nib.load(file_paths["t1"])
-    t2_img = nib.load(file_paths["t2"])
-    flair_img = nib.load(file_paths["flair"])
-
-    ref_affine = t1_img.affine
-    ref_header = t1_img.header
-
-    t1gd_data = t1gd_img.get_fdata(dtype=np.float32)
-    t1_data = t1_img.get_fdata(dtype=np.float32)
-    t2_data = t2_img.get_fdata(dtype=np.float32)
-    flair_data = flair_img.get_fdata(dtype=np.float32)
-
-    for data_arr in [t1gd_data, t1_data, t2_data, flair_data]:
-        mask = data_arr > 0
-        if np.any(mask):
-            mean = np.mean(data_arr[mask])
-            std = np.std(data_arr[mask])
-            data_arr[mask] = (data_arr[mask] - mean) / (std + 1e-8)
-
-    input_tensor = np.stack([t1gd_data, t1_data, t2_data, flair_data], axis=0)
-    input_tensor = torch.from_numpy(input_tensor).unsqueeze(0).to(_DEVICE)
-
+    _set_deterministic()
     model = load_monai_model()
+    images = {key: nib.load(file_paths[key]) for key in ("t1gd", "t1", "t2", "flair")}
+    ref_img = images["t1"]
+    ref_shape = ref_img.shape[:3]
+    for key, img in images.items():
+        if img.shape[:3] != ref_shape or not np.allclose(img.affine, ref_img.affine, atol=1e-3):
+            raise ValueError(f"{key.upper()} image does not match T1 dimensions/affine.")
+
+    preprocessed = _canonical_one_mm_images(images)
+    data_arrays = {key: image.get_fdata(dtype=np.float32) for key, image in preprocessed.items()}
+    for data in data_arrays.values():
+        mask = data > 0
+        if np.any(mask):
+            mean = float(np.mean(data[mask]))
+            std = float(np.std(data[mask]))
+            data[mask] = (data[mask] - mean) / (std + 1e-8)
+
+    # Crop using T1 foreground and apply the same crop to all modalities.
+    crop_slices, crop_origin = _foreground_crop(data_arrays["t1"])
+    cropped = {key: data[crop_slices] for key, data in data_arrays.items()}
+    input_tensor = torch.from_numpy(np.stack([cropped[key] for key in ("t1gd", "t1", "t2", "flair")], axis=0)).unsqueeze(0).to(_DEVICE)
+
     from monai.inferers import sliding_window_inference
+    spatial_shape = tuple(int(x) for x in input_tensor.shape[2:])
+    max_voxels = 240 * 240 * 160
+    if int(np.prod(spatial_shape)) <= max_voxels:
+        roi_size = spatial_shape
+        overlap = 0.0
+    else:
+        roi_size = tuple(min(192, int(d)) for d in spatial_shape)
+        roi_size = tuple(max(16, (d // 8) * 8) for d in roi_size)
+        overlap = 0.25
 
-    with torch.no_grad():
-        output_logits = sliding_window_inference(
-            inputs=input_tensor,
-            roi_size=(128, 128, 128),
-            sw_batch_size=2,
-            predictor=model,
-            overlap=0.5
-        )
-        probs = torch.sigmoid(output_logits).squeeze(0).cpu().numpy()
+    use_amp = _DEVICE.type == "cuda"
+    with torch.inference_mode():
+        if use_amp:
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                output_logits = sliding_window_inference(inputs=input_tensor, roi_size=roi_size, sw_batch_size=1, predictor=model, overlap=overlap)
+        else:
+            output_logits = sliding_window_inference(inputs=input_tensor, roi_size=roi_size, sw_batch_size=1, predictor=model, overlap=overlap)
+        probs = torch.sigmoid(output_logits).float().squeeze(0).cpu().numpy()
 
-    tc_mask = probs[0] > 0.5
-    wt_mask = probs[1] > 0.5
-    et_mask = probs[2] > 0.5
+    canonical_labels_cropped = convert_nested_masks_to_brats_codes(probs[0] > 0.5, probs[1] > 0.5, probs[2] > 0.5)
+    # Restore cropped labels to the full canonical 1 mm grid before mapping to the original affine/grid.
+    canonical_shape = preprocessed["t1"].shape[:3]
+    canonical_labels = np.zeros(canonical_shape, dtype=np.int16)
+    canonical_labels[crop_slices] = canonical_labels_cropped
+    crop_affine = np.asarray(preprocessed["t1"].affine, dtype=np.float64)
+    # crop_slices starts at crop_origin; translate the canonical affine so voxel 0 in the crop
+    # remains in the correct world coordinate system.
+    translation = np.eye(4, dtype=np.float64)
+    translation[:3, 3] = crop_origin
+    crop_affine = crop_affine @ translation
+    pred_label_map = _restore_prediction_to_original_grid(canonical_labels, preprocessed["t1"].affine, ref_img)
+    # The full canonical array is already positioned by its original affine; retain crop_affine
+    # as provenance for debugging without changing the restored result.
+    _ = crop_affine
 
-    pred_label_map = convert_nested_masks_to_brats_codes(tc_mask, wt_mask, et_mask)
-
-    output_nifti = nib.Nifti1Image(pred_label_map, affine=ref_affine, header=ref_header)
-    nib.save(output_nifti, output_save_path)
-
-    elapsed_time = round(time.time() - start_time, 2)
-    return pred_label_map, elapsed_time
+    output_header = ref_img.header.copy()
+    output_header.set_data_dtype(np.int16)
+    nib.save(nib.Nifti1Image(pred_label_map, affine=ref_img.affine, header=output_header), output_save_path)
+    return pred_label_map, round(time.time() - start_time, 2)

@@ -4,7 +4,11 @@ __pycache__/
 vh/
 env/
 venv/
+.venv/
+.venv*/
 .env
+.pytest_cache/
+*.egg-info/
 
 # Medical Scans & Temp Data
 *.nii
@@ -14,12 +18,23 @@ backend/data/*
 !backend/temp/.gitkeep
 !backend/data/.gitkeep
 
-# Local Database
+# Model weights & Checkpoints (protect Git history from large binaries)
+*.pt
+*.ts
+*.onnx
+*.bin
+!backend/app/models/brats_mri_segmentation/brats_mri_segmentation/models/.gitkeep
+
+# Local Database & Test Artefacts
 *.db
 *.sqlite3
+test_output/
 
 # Node / Frontend
 frontend/node_modules/
 frontend/build/
 frontend/dist/
 .DS_Store
+_reference/
+frontend-react/node_modules/
+frontend-react/dist/
