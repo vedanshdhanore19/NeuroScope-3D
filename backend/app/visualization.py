@@ -67,7 +67,6 @@ def _window(slice_2d: np.ndarray, brightness: float, contrast: float) -> np.ndar
     else:
         norm = np.zeros_like(slice_2d)
     norm = np.clip(norm, 0, 1)
-    # Mild gamma lift preserves anatomy while recovering low-contrast tissue.
     norm = np.power(norm, 0.88)
     return np.clip((norm - 0.5) * contrast + 0.5 + (brightness - 1.0) * 0.5, 0, 1)
 
@@ -133,6 +132,41 @@ def render_slice_png(
     return buf.getvalue()
 
 
+def get_study_volume_info(run_id: str) -> Dict[str, Any]:
+    """Return the spatial metadata used by the orthogonal viewer and crosshair logic."""
+    run_dir = TEMP_DIR / run_id
+    t1_path = run_dir / "t1.nii.gz"
+    if not t1_path.exists():
+        raise FileNotFoundError(f"T1 volume not found for run '{run_id}'.")
+
+    cached = _get_cached_nifti(t1_path)
+    if cached is None:
+        raise FileNotFoundError(f"Unable to read T1 volume for run '{run_id}'.")
+    img, data, affine, zooms = cached
+    orientation = "".join(nib.aff2axcodes(affine))
+    canonical = nib.as_closest_canonical(img)
+    canonical_affine = np.asarray(canonical.affine, dtype=np.float64)
+    canonical_zooms = [round(float(z), 4) for z in canonical.header.get_zooms()[:3]]
+
+    return {
+        "run_id": run_id,
+        "dimensions": [int(x) for x in data.shape[:3]],
+        "shape": [int(x) for x in data.shape[:3]],
+        "spacing": [round(float(z), 4) for z in zooms],
+        "voxel_spacing": [round(float(z), 4) for z in zooms],
+        "affine": affine.round(6).tolist(),
+        "orientation": orientation,
+        "canonical_orientation": "RAS",
+        "canonical_dimensions": [int(x) for x in canonical.shape[:3]],
+        "canonical_spacing": canonical_zooms,
+        "planes": {
+            "sagittal": {"axis": 0, "count": int(canonical.shape[0])},
+            "coronal": {"axis": 1, "count": int(canonical.shape[1])},
+            "axial": {"axis": 2, "count": int(canonical.shape[2])},
+        },
+    }
+
+
 def _region_mask(label_data: np.ndarray, region: str, t1_data: Optional[np.ndarray] = None) -> Tuple[np.ndarray, str]:
     region = region.upper().strip()
     if region == "BRAIN":
@@ -178,9 +212,6 @@ def generate_tumor_mesh(run_id: str, region: str = "WT", max_faces: int = 90000)
     hi = np.minimum(coords.max(axis=0) + margin + 1, np.array(mask.shape))
     crop = mask[tuple(slice(int(lo[i]), int(hi[i])) for i in range(3))]
 
-    # Brain surface is intentionally coarser because it is large; tumor surfaces
-    # retain higher detail. This avoids the long Marching Cubes stall while keeping
-    # clinically useful lesion contours crisp.
     if region == "BRAIN":
         step = 2 if count < 1800000 else 3
         sigma = 0.7
