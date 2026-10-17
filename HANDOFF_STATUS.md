@@ -1,25 +1,41 @@
 # NeuroScope-3D — Handoff Status
 
-## Current Status: ALL TASKS COMPLETED (Steps 1–5 Finalized)
+## Current Status: Viewer + preprocessing implementation pass in progress
 
-### What is verified and working:
-1. **Backend:**
-   - 50/50 tests passing in `tests/` (`pytest -q --ignore=tests/test_real_model_inference.py` passes 48/48 instantly, full suite passes 50/50).
-   - Running live on `http://127.0.0.1:8001`.
-   - Health check confirms real MONAI SegResNet weights loaded and ready for inference (`860ccb3f...` sha256).
-   - `/volume-info`, `/slice`, and `/mesh` verified live against study `7216820a-7061-48ad-a13d-2dea876a56f3`.
-   - All backend changes are strictly additive in `backend/app/visualization.py` with zero modifications to core models or pipeline logic.
-2. **Frontend:**
-   - `npm run build` passes with zero errors (built in ~3.2s).
-   - `npm run lint` (`oxlint`) passes with **0 warnings and 0 errors** across all 21 files.
-   - Vite dev server running on `http://localhost:5173/` with proxy to `http://127.0.0.1:8001`.
-   - Landing page hero: 3D Holographic Brain rotating on fixed vertical axis (constant speed, no wobble, no drag/zoom/pan, dpr capped at [1, 1.75], labelled "Illustrative model") + institutional sign-in card on left.
-   - Client-side gzip compression: any raw `.nii` file selected in BraTS or MSD mode is compressed in-browser via `CompressionStream('gzip')`, renamed `.nii.gz`, with visual "Compressing..." feedback and capability detection.
-   - Upload workspaces: supports both 4-sequence BraTS and 4D MSD Task01 with optional ground truth masks, matrix alignment checks, and SHA-256 provenance registration.
-   - Orthogonal 2D MPR viewer: 3 dark panels (Axial, Coronal, Sagittal), crosshairs, WT/TC/ET eye toggles with union semantics, brightness & contrast sliders, coordinate badge, responsive 1-to-3 column grid.
-   - Marching Cubes 3D surface viewer (`MeshViewer3D`): binary BufferGeometry from `/api/v1/jobs/{id}/mesh`, nested translucency (WT=0.35, TC=0.65, ET=0.85, depthWrite: false), orbit controls, wireframe toggle, camera reset, complete Three.js unmount cleanup.
-   - Results dashboard: physical volume cards (mL), derived spherical diameter (mm), amber plausibility warning (>800 mL or regions within 5%), ground-truth comparative accuracy table, and downloads.
-   - Report export: download protection for unsegmented runs, 3D Slicer / ITK-SNAP / Mango guidance, and SHA-256 provenance hash.
-   - Resumable studies: Zustand persistence with safe try/catch storage access and silent 404 auto-purge.
-   - Standardized BraTS labels: strictly `"WT (Whole tumor)"`, `"TC (Tumor core)"`, `"ET (Enhancing)"` across all components.
-   - Documentation: comprehensive `frontend-react/DESIGN_NOTES.md` written and committed.
+### Implemented in this pass
+1. **Inference geometry (C1):**
+   - Canonicalizes all four MRI sequences to RAS.
+   - Resamples images to a shared 1 mm isotropic grid before SegResNet inference.
+   - Restores the predicted BraTS label map to the original T1 shape and affine using nearest-neighbour resampling.
+   - Adds deterministic seeds and deterministic PyTorch algorithms.
+   - Added regression tests for canonical RAS/1 mm preprocessing and restoration.
+2. **Fail-safe validation (C2):**
+   - Adds explicit corrupt-gzip detection.
+   - Adds `NOT_A_BRAIN` plausibility rejection for non-zero physical extent outside 300–2500 mL and near-uniform volumes.
+   - Keeps skull stripping as a validation result/warning rather than an automatic rejection.
+   - Expert masks are exempt from brain-volume plausibility checks.
+3. **2D/3D visualization engine:**
+   - Shared ED/NCR/ET palette: teal `#2DD4BF`, amber `#FBBF24`, rose-red `#F43F5E`.
+   - Slice renderer uses 0.5–99.5 percentile windowing, gamma, optional CLAHE, high-quality upscaling, translucent overlays, and crisp label contours.
+   - Volume info now reports affine and orientation codes in addition to shape/spacing/planes.
+   - 3D meshes are generated in patient/world millimetre space from cropped, smoothed masks; BRAIN, WT, TC and ET are supported.
+   - Frontend 3D viewer now computes normals in-browser, displays a translucent brain shell plus tumor regions, and provides independent opacity controls.
+4. **MVP scaffolding:**
+   - Added `scripts/predict.py` for one-shot inference and optional expert comparison.
+   - Added `scripts/evaluate.py` which deliberately writes a `not yet run` evaluation result rather than inventing metrics.
+   - Added `backend/app/confidence.py` for honest outline-confidence statistics (not disease probability).
+
+### Existing project capabilities retained
+- Existing FastAPI validation, segmentation, study, prediction/report download, slice and mesh routes remain in place.
+- Existing React landing/upload/results/report screens were not intentionally restyled.
+- Research disclaimer remains part of the backend health contract: `Research and teaching prototype only. Not for diagnosis or clinical decision-making. AI predictions may be wrong.`
+
+### Verification note
+The GitHub connector can update and inspect repository files, but this environment does not provide a shell with access to clone the GitHub repository, so `pytest`/`npm run build` could not be executed here. The branch should be run locally before merging/pushing.
+
+### Remaining integration work from the requested specification
+- Wire the new slice `scale`/CLAHE query parameters and shared crosshair/voxel-to-world coordinates through the React viewer.
+- Add binary gzip mesh transport and progressive draft/full endpoint support while retaining JSON compatibility.
+- Persist and expose confidence/expert volumes in study/segment responses and render them in Results/PDF.
+- Complete A4 PDF provenance/confidence sections, `POST /api/v1/predict`, and the full multi-case evaluation adapter.
+- Add the remaining hidden-test fixtures and run the complete requested test/build/lint matrix locally.
