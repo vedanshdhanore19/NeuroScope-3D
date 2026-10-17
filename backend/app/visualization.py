@@ -1,119 +1,118 @@
-"""
-Visualization, Orthogonal Slice Engine, and Marching Cubes 3D Surface Generator
-for NeuroScope 3D.
-Provides:
-- Volume spatial info (/volume-info)
-- High-contrast multi-planar 2D slice rendering with robust percentile windowing,
-  brightness/contrast scaling, and independent region-union overlay semantics (/slice)
-- Marching-Cubes 3D surface extraction with voxel spacing, automated step-size scaling,
-  small component filtering, and centroid/bounding-box metadata (/mesh)
-"""
-
+"""Viewer rendering and world-space surface extraction for NeuroScope 3D."""
 import io
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple, Set, List
+from typing import Dict, Any, Optional, Tuple, Set
+
 import nibabel as nib
 import numpy as np
 from PIL import Image
+from scipy.ndimage import gaussian_filter, label as nd_label
 from skimage import measure
-from scipy.ndimage import gaussian_filter
+from skimage.segmentation import find_boundaries
+from skimage.transform import resize
 
 from .config import TEMP_DIR, LABEL_NCR, LABEL_ED, LABEL_ET
 
-# Shared in-memory cache for interactive slice scrubbing and mesh caching
+# Single source of truth for viewer/PDF/3D consumers.
+PALETTE = {
+    "ED": "#2DD4BF",
+    "NCR": "#FBBF24",
+    "ET": "#F43F5E",
+}
+PALETTE_RGB = {
+    LABEL_ED: np.array([45, 212, 191], dtype=np.float32),
+    LABEL_NCR: np.array([251, 191, 36], dtype=np.float32),
+    LABEL_ET: np.array([244, 63, 94], dtype=np.float32),
+}
+REGION_LABELS = {"WT": {LABEL_NCR, LABEL_ED, LABEL_ET}, "TC": {LABEL_NCR, LABEL_ET}, "ET": {LABEL_ET}}
+
 _NIFTI_CACHE: Dict[str, Tuple[nib.Nifti1Image, np.ndarray, np.ndarray, Tuple[float, float, float]]] = {}
 _MESH_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def _get_cached_nifti(file_path: Path):
-    """Loads and caches parsed NIfTI data with mtime cache validation."""
     if not file_path.exists():
         return None
-
-    path_str = str(file_path.resolve())
-    mtime = file_path.stat().st_mtime
-    cache_key = f"{path_str}:{mtime}"
-
+    stat = file_path.stat()
+    cache_key = f"{file_path.resolve()}:{stat.st_mtime_ns}"
     if cache_key in _NIFTI_CACHE:
         return _NIFTI_CACHE[cache_key]
-
-    img = nib.load(path_str)
+    img = nib.load(str(file_path))
     data = img.get_fdata(dtype=np.float32)
-    affine = img.affine
+    affine = np.asarray(img.affine, dtype=np.float64)
     zooms = tuple(float(z) for z in img.header.get_zooms()[:3])
-
-    # Keep cache bounded to 16 volumes
-    if len(_NIFTI_CACHE) > 16:
-        _NIFTI_CACHE.clear()
-
+    if len(_NIFTI_CACHE) >= 16:
+        _NIFTI_CACHE.pop(next(iter(_NIFTI_CACHE)))
     _NIFTI_CACHE[cache_key] = (img, data, affine, zooms)
     return _NIFTI_CACHE[cache_key]
 
 
+def _canonical_cached(file_path: Path):
+    cached = _get_cached_nifti(file_path)
+    if not cached:
+        return None
+    img, data, _affine, _zooms = cached
+    canonical = nib.as_closest_canonical(img)
+    return canonical, canonical.get_fdata(dtype=np.float32), np.asarray(canonical.affine), tuple(float(z) for z in canonical.header.get_zooms()[:3])
+
+
+def _plane_slice(data: np.ndarray, plane: str, index: Optional[int]):
+    plane = plane.lower()
+    axis = {"sagittal": 0, "coronal": 1, "axial": 2}.get(plane)
+    if axis is None:
+        raise ValueError("Plane must be axial, coronal, or sagittal.")
+    idx = int(np.clip(index if index is not None else data.shape[axis] // 2, 0, data.shape[axis] - 1))
+    if axis == 0:
+        raw = data[idx, :, :]
+    elif axis == 1:
+        raw = data[:, idx, :]
+    else:
+        raw = data[:, :, idx]
+    return np.rot90(raw, 1), idx
+
+
 def get_study_volume_info(run_id: str) -> Dict[str, Any]:
-    """Retrieves spatial dimensions, voxel spacing, and available sequences for a study run."""
     run_dir = TEMP_DIR / run_id
     if not run_dir.exists():
         raise FileNotFoundError(f"Study run '{run_id}' not found.")
-
-    # Find reference structural scan (prefer t1, fallback to any available modality)
-    ref_path = None
-    for seq in ["t1", "t1gd", "t2", "flair"]:
-        cand = run_dir / f"{seq}.nii.gz"
-        if cand.exists():
-            ref_path = cand
-            break
-
-    if not ref_path:
+    ref_path = next((run_dir / f"{s}.nii.gz" for s in ("t1", "t1gd", "t2", "flair") if (run_dir / f"{s}.nii.gz").exists()), None)
+    if ref_path is None:
         raise FileNotFoundError(f"No NIfTI sequences found for run '{run_id}'.")
-
-    cached = _get_cached_nifti(ref_path)
-    if not cached:
+    canonical = _canonical_cached(ref_path)
+    if canonical is None:
         raise FileNotFoundError("Could not read reference NIfTI volume.")
-
-    _, data, _, zooms = cached
-    shape = data.shape  # (X, Y, Z) -> (Sagittal, Coronal, Axial)
-
-    modalities = [
-        k for k in ["t1", "t1gd", "t2", "flair"]
-        if (run_dir / f"{k}.nii.gz").exists()
-    ]
-    has_prediction = (run_dir / "prediction.nii.gz").exists()
-    has_expert = (run_dir / "expert.nii.gz").exists()
-    has_report = (run_dir / "report.pdf").exists()
-
+    img, data, affine, zooms = canonical
+    shape = data.shape
+    axcodes = nib.aff2axcodes(affine)
+    modalities = [s for s in ("t1", "t1gd", "t2", "flair") if (run_dir / f"{s}.nii.gz").exists()]
     return {
         "run_id": run_id,
         "modalities": modalities,
-        "has_prediction": has_prediction,
-        "has_expert": has_expert,
-        "has_report": has_report,
+        "has_prediction": (run_dir / "prediction.nii.gz").exists(),
+        "has_expert": (run_dir / "expert.nii.gz").exists(),
+        "has_report": (run_dir / "report.pdf").exists(),
         "shape": {"x": int(shape[0]), "y": int(shape[1]), "z": int(shape[2])},
         "zooms": {"x": round(zooms[0], 3), "y": round(zooms[1], 3), "z": round(zooms[2], 3)},
+        "affine": np.asarray(affine).round(6).tolist(),
+        "orientation": "".join(axcodes),
         "planes": {
-            "axial": {
-                "name": "Axial",
-                "axis": 2,
-                "max_slice": int(shape[2] - 1),
-                "default_slice": int(shape[2] // 2),
-                "description": "Transverse (inferior-superior) orientation"
-            },
-            "coronal": {
-                "name": "Coronal",
-                "axis": 1,
-                "max_slice": int(shape[1] - 1),
-                "default_slice": int(shape[1] // 2),
-                "description": "Frontal (anterior-posterior) orientation"
-            },
-            "sagittal": {
-                "name": "Sagittal",
-                "axis": 0,
-                "max_slice": int(shape[0] - 1),
-                "default_slice": int(shape[0] // 2),
-                "description": "Lateral (left-right) orientation"
-            }
-        }
+            "axial": {"name": "Axial", "axis": 2, "max_slice": int(shape[2] - 1), "default_slice": int(shape[2] // 2), "description": "Transverse"},
+            "coronal": {"name": "Coronal", "axis": 1, "max_slice": int(shape[1] - 1), "default_slice": int(shape[1] // 2), "description": "Frontal"},
+            "sagittal": {"name": "Sagittal", "axis": 0, "max_slice": int(shape[0] - 1), "default_slice": int(shape[0] // 2), "description": "Lateral"},
+        },
     }
+
+
+def _window(slice_2d: np.ndarray, brightness: float, contrast: float) -> np.ndarray:
+    values = slice_2d[slice_2d > 0]
+    if values.size:
+        lo, hi = np.percentile(values, [0.5, 99.5])
+        norm = (slice_2d - lo) / max(hi - lo, 1e-8)
+    else:
+        norm = np.zeros_like(slice_2d)
+    norm = np.clip(norm, 0, 1)
+    norm = np.power(norm, 0.9)
+    return np.clip((norm - 0.5) * contrast + 0.5 + (brightness - 1.0) * 0.5, 0, 1)
 
 
 def render_slice_png(
@@ -124,278 +123,124 @@ def render_slice_png(
     regions: Optional[str] = "WT,TC,ET",
     brightness: float = 1.0,
     contrast: float = 1.0,
-    alpha: float = 0.55
+    alpha: float = 0.35,
+    scale: int = 2,
+    clahe: bool = False,
 ) -> bytes:
-    """
-    Renders a high-contrast 2D medical slice with synchronized multi-region
-    segmentation overlay as PNG bytes.
-    Region toggles use clean union semantics:
-    - WT -> includes labels {1, 2, 4}
-    - TC -> includes labels {1, 4}
-    - ET -> includes label {4}
-    Each visible label is rendered in its true subregion color:
-    - LABEL_ED (2) -> Medical Mint Green [0, 214, 144]
-    - LABEL_NCR (1) -> Amber [245, 158, 11]
-    - LABEL_ET (4) -> Coral Red [239, 68, 68]
-    """
     run_dir = TEMP_DIR / run_id
-    if not run_dir.exists():
-        raise FileNotFoundError(f"Run directory '{run_id}' not found.")
-
     modality_path = run_dir / f"{modality.lower()}.nii.gz"
     if not modality_path.exists():
-        # Fallback to t1
-        modality_path = run_dir / "t1.nii.gz"
-        if not modality_path.exists():
-            raise FileNotFoundError(f"Modality sequence '{modality}' not found for run '{run_id}'.")
-
-    cached = _get_cached_nifti(modality_path)
-    if not cached:
-        raise FileNotFoundError(f"Unable to read NIfTI volume at '{modality_path}'.")
-
-    _, data, _, _ = cached
-    shape = data.shape
-
-    # Determine axis and slice extraction
-    plane_lower = plane.lower()
-    if plane_lower == "axial":
-        axis_len = shape[2]
-        idx = int(np.clip(slice_idx if slice_idx is not None else axis_len // 2, 0, axis_len - 1))
-        raw_slice = data[:, :, idx]
-        # Standard radiological orientation: rotate 90 counter-clockwise so Anterior is Up
-        slice_2d = np.rot90(raw_slice, 1)
-    elif plane_lower == "coronal":
-        axis_len = shape[1]
-        idx = int(np.clip(slice_idx if slice_idx is not None else axis_len // 2, 0, axis_len - 1))
-        raw_slice = data[:, idx, :]
-        slice_2d = np.rot90(raw_slice, 1)
-    elif plane_lower == "sagittal":
-        axis_len = shape[0]
-        idx = int(np.clip(slice_idx if slice_idx is not None else axis_len // 2, 0, axis_len - 1))
-        raw_slice = data[idx, :, :]
-        slice_2d = np.rot90(raw_slice, 1)
+        raise FileNotFoundError(f"Modality sequence '{modality}' not found for run '{run_id}'.")
+    canonical = _canonical_cached(modality_path)
+    if canonical is None:
+        raise FileNotFoundError(f"Unable to read modality '{modality}'.")
+    _img, data, _affine, _zooms = canonical
+    slice_2d, idx = _plane_slice(data, plane, slice_idx)
+    if modality.lower() in ("prediction", "expert"):
+        rgb = np.zeros((*slice_2d.shape, 3), dtype=np.uint8)
+        for lbl, col in PALETTE_RGB.items():
+            rgb[slice_2d.astype(np.int16) == lbl] = col.astype(np.uint8)
     else:
-        raise ValueError(f"Unknown anatomical plane: '{plane}'. Must be axial, coronal, or sagittal.")
+        norm = _window(slice_2d, brightness, contrast)
+        if clahe:
+            from skimage.exposure import equalize_adapthist
+            norm = equalize_adapthist(norm, clip_limit=0.03)
+        gray = (norm * 255).astype(np.uint8)
+        rgb = np.repeat(gray[..., None], 3, axis=-1)
 
-    # Intensity normalization (robust percentile scaling on non-zero brain tissue)
-    non_zero = slice_2d[slice_2d > 0]
-    if len(non_zero) > 0:
-        p2 = np.percentile(non_zero, 1)
-        p98 = np.percentile(non_zero, 99)
-        if p98 > p2:
-            norm = (slice_2d - p2) / (p98 - p2)
-        else:
-            norm = slice_2d / (np.max(slice_2d) + 1e-8)
-    else:
-        norm = np.zeros_like(slice_2d)
+        pred_path = run_dir / "prediction.nii.gz"
+        if pred_path.exists() and regions and regions.strip():
+            pred = _canonical_cached(pred_path)
+            if pred is not None:
+                _pimg, pdata, _paff, _pz = pred
+                mask_2d, _ = _plane_slice(pdata, plane, idx)
+                selected = {r.strip().upper() for r in regions.split(",") if r.strip()}
+                active: Set[int] = set()
+                for region in selected:
+                    active.update(REGION_LABELS.get(region, set()))
+                overlay = rgb.astype(np.float32)
+                fill_alpha = float(np.clip(alpha, 0.0, 1.0))
+                for lbl in active:
+                    mask = mask_2d.astype(np.int16) == lbl
+                    if np.any(mask):
+                        col = PALETTE_RGB[lbl]
+                        overlay[mask] = overlay[mask] * (1 - fill_alpha) + col * fill_alpha
+                        boundary = find_boundaries(mask, mode="outer")
+                        overlay[boundary] = col
+                rgb = np.clip(overlay, 0, 255).astype(np.uint8)
 
-    norm = np.clip(norm, 0.0, 1.0)
-
-    # Apply brightness and contrast formula:
-    # out = clip((norm - 0.5) * contrast + 0.5 + (brightness - 1.0) * 0.5, 0.0, 1.0)
-    out_intensity = np.clip((norm - 0.5) * contrast + 0.5 + (brightness - 1.0) * 0.5, 0.0, 1.0)
-    gray = (out_intensity * 255.0).astype(np.uint8)
-
-    # Build RGB base image
-    rgb = np.stack([gray, gray, gray], axis=-1)
-
-    # Check for segmentation overlay
-    pred_path = run_dir / "prediction.nii.gz"
-    if pred_path.exists() and regions is not None and len(regions.strip()) > 0:
-        pred_cached = _get_cached_nifti(pred_path)
-        if pred_cached:
-            _, pred_data, _, _ = pred_cached
-            if pred_data.shape == shape:
-                if plane_lower == "axial":
-                    mask_raw = pred_data[:, :, idx]
-                elif plane_lower == "coronal":
-                    mask_raw = pred_data[:, idx, :]
-                else:
-                    mask_raw = pred_data[idx, :, :]
-
-                mask_2d = np.rot90(mask_raw.astype(np.int16), 1)
-
-                # Parse region list and determine which integer labels are active
-                selected_regions: Set[str] = {
-                    r.strip().upper() for r in regions.split(",") if r.strip()
-                }
-
-                active_labels: Set[int] = set()
-                if "WT" in selected_regions:
-                    active_labels.update([LABEL_NCR, LABEL_ED, LABEL_ET])  # {1, 2, 4}
-                if "TC" in selected_regions:
-                    active_labels.update([LABEL_NCR, LABEL_ET])            # {1, 4}
-                if "ET" in selected_regions:
-                    active_labels.add(LABEL_ET)                            # {4}
-
-                if active_labels:
-                    overlay_rgb = rgb.astype(np.float32)
-                    alpha_clamped = float(np.clip(alpha, 0.0, 1.0))
-
-                    # Subregion Colors:
-                    # LABEL_ED (2): Mint Green [0, 214, 144]
-                    # LABEL_NCR (1): Amber [245, 158, 11]
-                    # LABEL_ET (4): Coral Red [239, 68, 68]
-                    color_map = {
-                        LABEL_ED: np.array([0, 214, 144], dtype=np.float32),
-                        LABEL_NCR: np.array([245, 158, 11], dtype=np.float32),
-                        LABEL_ET: np.array([239, 68, 68], dtype=np.float32),
-                    }
-
-                    for lbl in active_labels:
-                        if lbl in color_map:
-                            lbl_mask = (mask_2d == lbl)
-                            if np.any(lbl_mask):
-                                col = color_map[lbl]
-                                overlay_rgb[lbl_mask] = (
-                                    (1.0 - alpha_clamped) * overlay_rgb[lbl_mask] +
-                                    alpha_clamped * col
-                                )
-
-                    rgb = np.clip(overlay_rgb, 0, 255).astype(np.uint8)
-
-    # Encode to PNG bytes
-    img_pil = Image.fromarray(rgb, mode="RGB")
+    scale = int(np.clip(scale, 1, 3))
+    if scale > 1:
+        target = (rgb.shape[0] * scale, rgb.shape[1] * scale)
+        rgb = resize(rgb, target, order=3, preserve_range=True, anti_aliasing=True).astype(np.uint8)
     buf = io.BytesIO()
-    img_pil.save(buf, format="PNG", optimize=True)
+    Image.fromarray(rgb, mode="RGB").save(buf, format="PNG", optimize=True)
     return buf.getvalue()
 
 
-def generate_tumor_mesh(
-    run_id: str,
-    region: str = "WT",
-    max_faces: int = 150000
-) -> Dict[str, Any]:
-    """
-    Extracts a 3D polygonal surface mesh for the specified tumor region
-    using Marching Cubes, formatted for Three.js BufferGeometry rendering.
+def _region_mask(label_data: np.ndarray, region: str, t1_data: Optional[np.ndarray] = None) -> Tuple[np.ndarray, str]:
+    region = region.upper().strip()
+    if region == "BRAIN":
+        if t1_data is None:
+            raise ValueError("T1 is required for the BRAIN surface.")
+        mask = np.abs(t1_data) > max(1e-6, float(np.percentile(np.abs(t1_data[t1_data != 0]), 5)) if np.any(t1_data != 0) else 1e-6)
+        return mask, "#B8C7D9"
+    if region not in REGION_LABELS:
+        raise ValueError("Unknown region. Use BRAIN, WT, TC, or ET.")
+    return np.isin(label_data, list(REGION_LABELS[region])), {"WT": "#2DD4BF", "TC": "#FBBF24", "ET": "#F43F5E"}[region]
 
-    Improvements over reference:
-    - Nested composite definitions: WT={1,2,4}, TC={1,4}, ET={4}
-    - Spacing applied in mm
-    - Small island filtering (< 50 voxels)
-    - Dynamic step_size scaling to guarantee num_faces <= max_faces
-    - Returns centroid (center_mm) and bounding box (bbox_mm)
-    - Response cached in LRU by run_id:region:mtime
-    """
+
+def generate_tumor_mesh(run_id: str, region: str = "WT", max_faces: int = 60000, quality: str = "full") -> Dict[str, Any]:
     run_dir = TEMP_DIR / run_id
     pred_path = run_dir / "prediction.nii.gz"
-    if not pred_path.exists():
+    if not pred_path.exists() and region.upper() != "BRAIN":
         raise FileNotFoundError(f"Prediction mask not found for run '{run_id}'.")
-
-    mtime = pred_path.stat().st_mtime
-    region_upper = region.upper().strip()
-    cache_key = f"{run_id}:{region_upper}:{max_faces}:{mtime}"
-
+    source_path = pred_path if pred_path.exists() else run_dir / "t1.nii.gz"
+    pred_cached = _canonical_cached(source_path)
+    if pred_cached is None:
+        raise FileNotFoundError("Could not load mesh source volume.")
+    _img, source_data, affine, zooms = pred_cached
+    cache_key = f"{run_id}:{region.upper()}:{max_faces}:{quality}:{source_path.stat().st_mtime_ns}"
     if cache_key in _MESH_CACHE:
         return _MESH_CACHE[cache_key]
 
-    cached = _get_cached_nifti(pred_path)
-    if not cached:
-        raise FileNotFoundError("Could not load prediction NIfTI file.")
-
-    _, label_data, _, zooms = cached
-
-    # Define binary mask based on nested BraTS composite regions
-    if region_upper == "WT":
-        mask = np.isin(label_data, [LABEL_NCR, LABEL_ED, LABEL_ET])
-        region_color = "#00D690"  # Mint Green
-    elif region_upper == "TC":
-        mask = np.isin(label_data, [LABEL_NCR, LABEL_ET])
-        region_color = "#F59E0B"  # Amber
-    elif region_upper == "ET":
-        mask = (label_data == LABEL_ET)
-        region_color = "#EF4444"  # Coral Red
+    t1_data = None
+    if region.upper() == "BRAIN":
+        t1_cached = _canonical_cached(run_dir / "t1.nii.gz")
+        t1_data = t1_cached[1] if t1_cached else None
+        mask, color = _region_mask(source_data, region, t1_data)
     else:
-        raise ValueError(f"Unknown tumor region '{region}'. Must be WT, TC, or ET.")
+        mask, color = _region_mask(source_data, region)
+    count = int(np.count_nonzero(mask))
+    empty = {"region": region.upper(), "color": color, "num_voxels": count, "num_vertices": 0, "num_faces": 0, "step_size": 1, "center_mm": [0, 0, 0], "bbox_mm": {"min": [0, 0, 0], "max": [0, 0, 0]}, "vertices": [], "faces": []}
+    if count < 20:
+        return empty
 
-    num_voxels = int(np.count_nonzero(mask))
-    empty_result = {
-        "region": region_upper,
-        "color": region_color,
-        "num_voxels": num_voxels,
-        "num_vertices": 0,
-        "num_faces": 0,
-        "step_size": 1,
-        "center_mm": [0.0, 0.0, 0.0],
-        "bbox_mm": {"min": [0.0, 0.0, 0.0], "max": [0.0, 0.0, 0.0]},
-        "vertices": [],
-        "faces": [],
-        "normals": []
-    }
-
-    if num_voxels < 20:
-        return empty_result
-
-    # Remove small island connected components (< 50 voxels) to avoid float speckles
-    try:
-        labeled_mask, num_features = measure.label(mask, connectivity=2, return_num=True)
-        if num_features > 1:
-            component_sizes = np.bincount(labeled_mask.ravel())
-            too_small = component_sizes < 50
-            too_small_mask = too_small[labeled_mask]
-            mask[too_small_mask] = False
-    except Exception:
-        pass  # If labeling fails, proceed with raw mask
-
-    num_voxels_cleaned = int(np.count_nonzero(mask))
-    if num_voxels_cleaned < 20:
-        return empty_result
-
-    # Compute bounding box in physical millimeters
+    # Crop before smoothing/marching cubes for speed.
     coords = np.argwhere(mask)
-    min_vox = coords.min(axis=0)
-    max_vox = coords.max(axis=0)
-
-    bbox_mm = {
-        "min": [round(float(min_vox[i] * zooms[i]), 2) for i in range(3)],
-        "max": [round(float(max_vox[i] * zooms[i]), 2) for i in range(3)]
-    }
-
-    # Marching cubes with automated step_size search to guarantee faces <= max_faces
-    step_size = 1
-    verts, faces, normals = None, None, None
-
-    for step in [1, 2, 3, 4]:
-        try:
-            v, f, n, _ = measure.marching_cubes(
-                volume=mask.astype(np.uint8),
-                level=0.5,
-                spacing=zooms,
-                step_size=step
-            )
-            verts, faces, normals = v, f, n
-            step_size = step
-            if len(faces) <= max_faces:
-                break
-        except Exception:
-            break
-
-    if verts is None or len(verts) == 0:
-        return empty_result
-
-    # Center vertices around centroid for smooth Three.js viewport rotation
-    center_mm = verts.mean(axis=0)
-    centered_verts = (verts - center_mm).astype(np.float32)
-    normals = normals.astype(np.float32)
-
-    result = {
-        "region": region_upper,
-        "color": region_color,
-        "num_voxels": num_voxels_cleaned,
-        "num_vertices": int(len(verts)),
-        "num_faces": int(len(faces)),
-        "step_size": step_size,
-        "center_mm": [round(float(c), 2) for c in center_mm],
-        "bbox_mm": bbox_mm,
-        "vertices": centered_verts.flatten().round(2).tolist(),
-        "faces": faces.flatten().tolist(),
-        "normals": normals.flatten().round(2).tolist()
-    }
-
-    # Cache result
-    if len(_MESH_CACHE) > 20:
-        _MESH_CACHE.clear()
+    margin = 3
+    lo = np.maximum(coords.min(axis=0) - margin, 0)
+    hi = np.minimum(coords.max(axis=0) + margin + 1, np.array(mask.shape))
+    crop = mask[tuple(slice(int(lo[i]), int(hi[i])) for i in range(3))]
+    if quality == "draft":
+        step = 3
+    else:
+        step = 1 if count < 100000 else 2
+    smooth = gaussian_filter(crop.astype(np.float32), sigma=1.0)
+    try:
+        verts, faces, _normals, _values = measure.marching_cubes(smooth, level=0.5, spacing=zooms, step_size=step)
+    except (ValueError, RuntimeError):
+        return empty
+    verts += lo * np.asarray(zooms)
+    world = nib.affines.apply_affine(affine, verts)
+    center = world.mean(axis=0)
+    centered = (world - center).astype(np.float32)
+    bbox = {"min": world.min(axis=0).round(2).tolist(), "max": world.max(axis=0).round(2).tolist()}
+    if len(faces) > max_faces:
+        keep = max(1, int(np.ceil(len(faces) / max_faces)))
+        faces = faces[::keep]
+    result = {"region": region.upper(), "color": color, "num_voxels": count, "num_vertices": int(len(centered)), "num_faces": int(len(faces)), "step_size": step, "center_mm": center.round(2).tolist(), "bbox_mm": bbox, "vertices": centered.flatten().tolist(), "faces": faces.flatten().astype(np.uint32).tolist()}
+    if len(_MESH_CACHE) >= 24:
+        _MESH_CACHE.pop(next(iter(_MESH_CACHE)))
     _MESH_CACHE[cache_key] = result
-
     return result
