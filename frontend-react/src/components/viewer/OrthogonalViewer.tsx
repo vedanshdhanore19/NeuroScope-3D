@@ -58,12 +58,15 @@ export const OrthogonalViewer: React.FC<OrthogonalViewerProps> = ({
 
     api.getVolumeInfo(runId)
       .then((info) => {
-        if (!isMounted) return;
+        if (!isMounted || !info) return;
         setVolInfo(info);
-        setAxialSlice(info.planes.axial.default_slice);
-        setCoronalSlice(info.planes.coronal.default_slice);
-        setSagittalSlice(info.planes.sagittal.default_slice);
-        if (info.modalities.length > 0) {
+        const ax = info.planes?.axial?.default_slice ?? (info.planes?.axial?.count ? Math.floor(info.planes.axial.count / 2) : 64);
+        const co = info.planes?.coronal?.default_slice ?? (info.planes?.coronal?.count ? Math.floor(info.planes.coronal.count / 2) : 64);
+        const sa = info.planes?.sagittal?.default_slice ?? (info.planes?.sagittal?.count ? Math.floor(info.planes.sagittal.count / 2) : 64);
+        setAxialSlice(ax);
+        setCoronalSlice(co);
+        setSagittalSlice(sa);
+        if (Array.isArray(info.modalities) && info.modalities.length > 0) {
           setSelectedModality(info.modalities.includes('t1gd') ? 't1gd' : info.modalities[0]);
         }
       })
@@ -94,16 +97,16 @@ export const OrthogonalViewer: React.FC<OrthogonalViewerProps> = ({
   const handleResetView = () => {
     setBrightness(1.0);
     setContrast(1.0);
-    if (volInfo) {
-      setAxialSlice(volInfo.planes.axial.default_slice);
-      setCoronalSlice(volInfo.planes.coronal.default_slice);
-      setSagittalSlice(volInfo.planes.sagittal.default_slice);
+    if (volInfo?.planes) {
+      setAxialSlice(volInfo.planes.axial?.default_slice ?? (volInfo.planes.axial?.count ? Math.floor(volInfo.planes.axial.count / 2) : 64));
+      setCoronalSlice(volInfo.planes.coronal?.default_slice ?? (volInfo.planes.coronal?.count ? Math.floor(volInfo.planes.coronal.count / 2) : 64));
+      setSagittalSlice(volInfo.planes.sagittal?.default_slice ?? (volInfo.planes.sagittal?.count ? Math.floor(volInfo.planes.sagittal.count / 2) : 64));
     }
   };
 
-  const maxAxial = volInfo?.planes.axial.max_slice || 155;
-  const maxCoronal = volInfo?.planes.coronal.max_slice || 240;
-  const maxSagittal = volInfo?.planes.sagittal.max_slice || 240;
+  const maxAxial = volInfo?.planes?.axial?.max_slice ?? (volInfo?.planes?.axial?.count ? volInfo.planes.axial.count - 1 : 155);
+  const maxCoronal = volInfo?.planes?.coronal?.max_slice ?? (volInfo?.planes?.coronal?.count ? volInfo.planes.coronal.count - 1 : 240);
+  const maxSagittal = volInfo?.planes?.sagittal?.max_slice ?? (volInfo?.planes?.sagittal?.count ? volInfo.planes.sagittal.count - 1 : 240);
 
   // Build active regions parameter
   const activeRegionsList: string[] = [];
@@ -165,7 +168,23 @@ export const OrthogonalViewer: React.FC<OrthogonalViewerProps> = ({
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
               {volInfo
-                ? `Dimensions: ${volInfo.shape.x} × ${volInfo.shape.y} × ${volInfo.shape.z} voxels • Spacing: ${volInfo.zooms.x} × ${volInfo.zooms.y} × ${volInfo.zooms.z} mm`
+                ? (() => {
+                    const dims = Array.isArray(volInfo.shape)
+                      ? volInfo.shape.join(' × ')
+                      : Array.isArray(volInfo.dimensions)
+                      ? volInfo.dimensions.join(' × ')
+                      : volInfo.shape
+                      ? `${volInfo.shape.x ?? 240} × ${volInfo.shape.y ?? 240} × ${volInfo.shape.z ?? 155}`
+                      : '240 × 240 × 155';
+                    const spc = Array.isArray(volInfo.spacing)
+                      ? volInfo.spacing.join(' × ')
+                      : Array.isArray(volInfo.voxel_spacing)
+                      ? volInfo.voxel_spacing.join(' × ')
+                      : volInfo.zooms
+                      ? `${volInfo.zooms.x ?? 1.0} × ${volInfo.zooms.y ?? 1.0} × ${volInfo.zooms.z ?? 1.0}`
+                      : '1.0 × 1.0 × 1.0';
+                    return `Dimensions: ${dims} voxels • Spacing: ${spc} mm`;
+                  })()
                 : isLoadingInfo
                 ? 'Reading volume geometry...'
                 : 'Geometry details unavailable'}

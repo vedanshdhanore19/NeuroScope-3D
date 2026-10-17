@@ -1,17 +1,8 @@
-import React, { lazy, Suspense } from 'react';
+import React from 'react';
 import { useStudyStore } from '../../store/studyStore';
 import { InlineAuthCard } from '../auth/InlineAuthCard';
-import {
-  Brain,
-  Layers,
-  ArrowUpRight,
-  ArrowRight,
-  Play,
-  BarChart2,
-  Info,
-} from 'lucide-react';
-
-const HolographicBrain = lazy(() => import('./HolographicBrain'));
+import { Brain, Layers, ArrowUpRight, ArrowRight, Play, BarChart2, Info } from 'lucide-react';
+import { HolographicBrain } from './HolographicBrain';
 
 interface HeroSectionProps {
   onStartUpload: () => void;
@@ -107,16 +98,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             <span>Holographic 3D Spatial Projection</span>
           </div>
 
-          <Suspense
-            fallback={
-              <div className="w-full h-full flex flex-col items-center justify-center space-y-3">
-                <div className="w-8 h-8 rounded-full border-2 border-cyan-light border-t-transparent animate-spin" />
-                <p className="text-xs font-mono text-slate-400">Initializing 3D Canvas...</p>
-              </div>
-            }
-          >
-            <HolographicBrain />
-          </Suspense>
+          <HolographicBrain />
         </div>
       </section>
 

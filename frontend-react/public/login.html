@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NeuroScope 3D - Sign In</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100vh;
+            background-color: #050b14;
+            color: #ffffff;
+            overflow: hidden;
+        }
+
+        /* --- LOADER SCREEN --- */
+        #loader-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #050b14;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            transition: opacity 0.8s ease-in-out;
+        }
+
+        .brand-title {
+            font-size: 2rem;
+            font-weight: 600;
+            letter-spacing: 2px;
+            margin-bottom: 30px;
+            background: linear-gradient(90deg, #60a5fa, #38bdf8, #818cf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .loader-container {
+            width: 280px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .loader-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #3b82f6, #06b6d4);
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.8);
+            transition: width 0.1s linear;
+        }
+
+        .loader-percentage {
+            margin-top: 15px;
+            font-size: 0.85rem;
+            color: #94a3b8;
+            letter-spacing: 1px;
+        }
+
+        /* --- MAIN LAYOUT (SPLIT SCREEN) --- */
+        #main-container {
+            display: flex;
+            width: 100%;
+            height: 100vh;
+            opacity: 0;
+            transition: opacity 1s ease-in-out;
+        }
+
+        /* Left Side: Sign-In Form */
+        .auth-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 0 clamp(24px, 6vw, 80px);
+            background: #050b14;
+            z-index: 10;
+        }
+
+        .auth-header h1 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .auth-header p {
+            color: #94a3b8;
+            font-size: 0.95rem;
+            margin-bottom: 35px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        .input-group label {
+            display: block;
+            font-size: 0.85rem;
+            color: #cbd5e1;
+            margin-bottom: 8px;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 14px 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.2s, background 0.2s;
+        }
+
+        .input-group input:focus {
+            border-color: #38bdf8;
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .auth-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #2563eb, #3b82f6);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            margin-top: 10px;
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+            transition: opacity 0.2s, transform 0.1s;
+        }
+
+        .auth-btn:hover {
+            opacity: 0.9;
+        }
+
+        .auth-btn:active {
+            transform: scale(0.98);
+        }
+
+        .bypass-row {
+            margin-top: 24px;
+            padding-top: 18px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.8rem;
+            color: #64748b;
+        }
+
+        .bypass-btn {
+            background: none;
+            border: none;
+            color: #38bdf8;
+            cursor: pointer;
+            font-weight: 500;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            transition: color 0.2s;
+        }
+
+        .bypass-btn:hover {
+            color: #7dd3fc;
+        }
+
+        /* Right Side: Brain Visual / Video Panel */
+        .visual-section {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(circle at center, #0f172a 0%, #050b14 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        .visual-section video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            position: relative;
+            z-index: 2;
+            mix-blend-mode: screen;
+        }
+
+        #neural-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        @media (max-width: 768px) {
+            #main-container {
+                flex-direction: column;
+                height: 100vh;
+                overflow-y: auto;
+            }
+            .auth-section {
+                padding: 40px 24px;
+                min-height: auto;
+            }
+            .visual-section {
+                height: 45vh;
+                min-height: 280px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Buffer / Loading Screen -->
+    <div id="loader-screen">
+        <div class="brand-title">NeuroScope 3D</div>
+        <div class="loader-container">
+            <div class="loader-bar" id="loader-bar"></div>
+        </div>
+        <div class="loader-percentage" id="loader-percentage">0% complete</div>
+    </div>
+
+    <!-- Main Content App Container -->
+    <div id="main-container">
+        <!-- Left: Sign In Panel -->
+        <div class="auth-section">
+            <div class="auth-header">
+                <h1>Welcome Back</h1>
+                <p>Sign in to access your NeuroScope EEG workspace.</p>
+            </div>
+            <form id="loginForm" onsubmit="handleSignIn(event)">
+                <div class="input-group">
+                    <label>Email Address</label>
+                    <input type="email" id="emailInput" placeholder="name@institution.com" required>
+                </div>
+                <div class="input-group">
+                    <label>Password</label>
+                    <input type="password" id="passwordInput" placeholder="••••••••" required>
+                </div>
+                <button type="submit" class="auth-btn" id="submitBtn">Sign In</button>
+            </form>
+
+            <div class="bypass-row">
+                <span>Research Prototype Mode</span>
+                <button type="button" class="bypass-btn" onclick="enterWorkspace('guest@neuroscope.io')">Enter Open Workspace &rarr;</button>
+            </div>
+        </div>
+
+        <!-- Right: 3D Brain Visual -->
+        <div class="visual-section">
+            <canvas id="neural-canvas"></canvas>
+            <video id="brain-video" autoplay muted loop playsinline>
+                <source src="brain-visual.mp4" type="video/mp4">
+                <source src="/brain-visual.mp4" type="video/mp4">
+                Your browser does not support the video tag.
+            </video>
+        </div>
+    </div>
+
+    <script>
+        // Simulated Buffer Progress Animation
+        const loaderBar = document.getElementById('loader-bar');
+        const loaderPercentage = document.getElementById('loader-percentage');
+        const loaderScreen = document.getElementById('loader-screen');
+        const mainContainer = document.getElementById('main-container');
+
+        let progress = 0;
+        const interval = setInterval(() => {
+            progress += Math.floor(Math.random() * 8) + 3;
+            if (progress >= 100) {
+                progress = 100;
+                clearInterval(interval);
+                
+                // Transition out loader and reveal main layout
+                setTimeout(() => {
+                    loaderScreen.style.opacity = '0';
+                    setTimeout(() => {
+                        loaderScreen.style.display = 'none';
+                        mainContainer.style.opacity = '1';
+                    }, 800);
+                }, 400);
+            }
+            loaderBar.style.width = progress + '%';
+            loaderPercentage.textContent = progress + '% complete';
+        }, 60);
+
+        function handleSignIn(e) {
+            e.preventDefault();
+            const email = document.getElementById('emailInput').value || 'radiologist@hospital.org';
+            enterWorkspace(email);
+        }
+
+        function enterWorkspace(email) {
+            try {
+                localStorage.setItem('neuroscope.auth', JSON.stringify({ email: email, timestamp: Date.now() }));
+            } catch(e) {}
+            // Redirect to root app
+            window.location.href = '/';
+        }
+
+        // Real-time 3D Rotating Neural Brain Procedural Visualization (Canvas Fallback)
+        (function() {
+            const canvas = document.getElementById('neural-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+
+            let w = canvas.width = canvas.parentElement.clientWidth || 600;
+            let h = canvas.height = canvas.parentElement.clientHeight || 600;
+
+            window.addEventListener('resize', () => {
+                if (!canvas.parentElement) return;
+                w = canvas.width = canvas.parentElement.clientWidth;
+                h = canvas.height = canvas.parentElement.clientHeight;
+            });
+
+            const points = [];
+            for (let i = 0; i < 240; i++) {
+                const u = Math.random();
+                const v = Math.random();
+                const theta = u * 2.0 * Math.PI;
+                const phi = Math.acos(2.0 * v - 1.0);
+                const hemisphere = Math.random() > 0.5 ? 1 : -1;
+                const rX = 140 * Math.sin(phi) * Math.cos(theta) * 0.95 + hemisphere * 18;
+                const rY = 115 * Math.sin(phi) * Math.sin(theta) * 0.85;
+                const rZ = 165 * Math.cos(phi);
+                points.push({
+                    x: rX, y: rY, z: rZ,
+                    hemisphere: hemisphere,
+                    pulse: Math.random() * Math.PI * 2
+                });
+            }
+
+            let angleY = 0;
+            function render() {
+                ctx.clearRect(0, 0, w, h);
+                const cx = w / 2;
+                const cy = h / 2;
+                const fov = 380;
+                angleY += 0.008;
+
+                const cosY = Math.cos(angleY);
+                const sinY = Math.sin(angleY);
+
+                const projected = points.map(p => {
+                    p.pulse += 0.03;
+                    let x1 = p.x * cosY - p.z * sinY;
+                    let z1 = p.x * sinY + p.z * cosY;
+                    let y2 = p.y * Math.cos(0.2) - z1 * Math.sin(0.2);
+                    let z2 = p.y * Math.sin(0.2) + z1 * Math.cos(0.2);
+                    const depth = fov / (fov + z2 + 220);
+                    return { x2d: cx + x1 * depth, y2d: cy + y2 * depth, depth: depth, pulse: p.pulse };
+                });
+
+                ctx.lineWidth = 0.5;
+                for (let i = 0; i < projected.length; i++) {
+                    const p1 = projected[i];
+                    for (let j = i + 1; j < projected.length && j < i + 12; j++) {
+                        const p2 = projected[j];
+                        const dx = p1.x2d - p2.x2d;
+                        const dy = p1.y2d - p2.y2d;
+                        const distSq = dx * dx + dy * dy;
+                        if (distSq < 2000) {
+                            ctx.strokeStyle = `rgba(56, 189, 248, ${(1 - distSq / 2000) * 0.25 * p1.depth})`;
+                            ctx.beginPath();
+                            ctx.moveTo(p1.x2d, p1.y2d);
+                            ctx.lineTo(p2.x2d, p2.y2d);
+                            ctx.stroke();
+                        }
+                    }
+                }
+
+                for (let i = 0; i < projected.length; i++) {
+                    const p = projected[i];
+                    const radius = Math.max(1, 2.2 * p.depth + (Math.sin(p.pulse) + 1) * 0.7);
+                    ctx.fillStyle = `rgba(96, 165, 250, ${0.4 + p.depth * 0.5})`;
+                    ctx.beginPath();
+                    ctx.arc(p.x2d, p.y2d, radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                requestAnimationFrame(render);
+            }
+            render();
+        })();
+    </script>
+</body>
+</html>

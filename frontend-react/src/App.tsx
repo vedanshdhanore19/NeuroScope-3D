@@ -6,10 +6,12 @@ import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { Toast, ToastMessage } from './components/ui/Toast';
 import { HeroSection } from './components/landing/HeroSection';
+import { LoginPage } from './components/auth/LoginPage';
 import { StudyUpload } from './components/upload/StudyUpload';
 import { OrthogonalViewer } from './components/viewer/OrthogonalViewer';
 import { ResultsDashboard } from './components/results/ResultsDashboard';
 import { ReportExport } from './components/reports/ReportExport';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import {
   UploadCloud,
   BarChart2,
@@ -59,6 +61,23 @@ export const App: React.FC = () => {
     const interval = setInterval(checkHealth, 15000);
     return () => clearInterval(interval);
   }, [setHealth]);
+
+  // Synchronize browser history and routes (/login vs /)
+  useEffect(() => {
+    const handlePopState = () => {
+      const isLogin =
+        window.location.pathname === '/login' ||
+        window.location.pathname.endsWith('/login.html') ||
+        window.location.hash === '#/login';
+      if (isLogin && activeTab !== 'login') {
+        setActiveTab('login');
+      } else if (!isLogin && activeTab === 'login') {
+        setActiveTab('dashboard');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [activeTab, setActiveTab]);
 
   // Restore study details on mount if currentRunId is saved in localStorage
   useEffect(() => {
@@ -144,16 +163,27 @@ export const App: React.FC = () => {
     }
   };
 
+  if (activeTab === 'login') {
+    return (
+      <LoginPage
+        onSuccess={() => {
+          setActiveTab('dashboard');
+        }}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col min-h-screen bg-bg-primary text-navy font-sans antialiased selection:bg-cyan/15 selection:text-cyan">
       {/* Top Clinical Navbar */}
-      <Navbar onOpenAuth={() => setActiveTab('dashboard')} />
+      <Navbar onOpenAuth={() => setActiveTab('login')} />
 
       {/* Toast Notification */}
       <Toast toast={toast} onDismiss={() => setToast(null)} />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8">
+        <ErrorBoundary onReset={() => setActiveTab('dashboard')}>
         {/* TAB 1: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <HeroSection
@@ -275,6 +305,7 @@ export const App: React.FC = () => {
               </button>
             </div>
           ))}
+        </ErrorBoundary>
       </main>
 
       {/* Clinical Footer */}

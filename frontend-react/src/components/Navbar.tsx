@@ -9,7 +9,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onOpenAuth, onRefreshHealth }) => {
-  const { activeTab, setActiveTab, currentRunId, hasPrediction, health, resetViewer, mobileMenuOpen, setMobileMenuOpen } = useStudyStore();
+  const { activeTab, setActiveTab, currentRunId, hasPrediction, health, resetViewer, mobileMenuOpen, setMobileMenuOpen, isAuthenticated, userEmail, logout } = useStudyStore();
   // FastAPI /health returns status="healthy"; older frontend code expected "online".
   const isOnline = health?.status === 'healthy' || health?.status === 'online';
   const isModelReady = health?.model?.ready_for_inference ?? health?.data?.model?.ready_for_inference ?? false;
@@ -36,7 +36,22 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAuth, onRefreshHealth }) =
             <span>{isOnline ? `Online (${health?.latencyMs ?? 0}ms)` : 'Connecting…'}</span>
           </button>
           <button onClick={resetViewer} className="px-4 py-2 rounded-full bg-navy hover:bg-navy-dark text-white text-xs font-bold transition-all shadow-md hover:shadow-lg flex items-center space-x-1.5 active:scale-95"><Plus className="w-3.5 h-3.5" /><span>New Analysis</span></button>
-          <button onClick={onOpenAuth} className="p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors border border-slate-200" title="Sign In"><Lock className="w-4 h-4 text-slate-600" /></button>
+          {isAuthenticated ? (
+            <div className="flex items-center space-x-2 pl-1 border-l border-slate-200">
+              <button
+                onClick={() => logout()}
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-slate-700 text-xs font-medium transition-colors border border-slate-200"
+                title={`Signed in as ${userEmail || 'Researcher'}. Click to sign out.`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span className="max-w-[110px] truncate">{userEmail ? userEmail.split('@')[0] : 'Sign Out'}</span>
+              </button>
+            </div>
+          ) : (
+            <button onClick={onOpenAuth} className="p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors border border-slate-200" title="Sign In">
+              <Lock className="w-4 h-4 text-slate-600" />
+            </button>
+          )}
         </div>
         <div className="flex md:hidden items-center space-x-2"><button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="p-2 rounded-xl bg-slate-100 text-slate-700" aria-label="Toggle Navigation">{mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}</button></div>
       </div>

@@ -304,7 +304,7 @@ def run_segmentation(run_id: str, db: Session = Depends(get_db)):
     study_rec = db.query(Study).filter(Study.study_id == run_id).first()
     if study_rec is None:
         raise HTTPException(status_code=404, detail="Validated study record not found.")
-    if study_rec.status not in ("VALIDATED", "COMPLETED"):
+    if study_rec.status not in ("VALIDATED", "COMPLETED", "FAILED", "PROCESSING"):
         raise HTTPException(
             status_code=409,
             detail=f"Study is not ready for inference (status: {study_rec.status})."

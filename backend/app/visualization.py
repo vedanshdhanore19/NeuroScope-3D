@@ -148,21 +148,56 @@ def get_study_volume_info(run_id: str) -> Dict[str, Any]:
     canonical_affine = np.asarray(canonical.affine, dtype=np.float64)
     canonical_zooms = [round(float(z), 4) for z in canonical.header.get_zooms()[:3]]
 
+    canonical_dims = [int(x) for x in canonical.shape[:3]]
+    shape_list = [int(x) for x in data.shape[:3]]
+    spacing_list = [round(float(z), 4) for z in zooms]
+
+    # Detect available modality volumes on disk for this study run
+    mod_list = [m for m in ["t1", "t1gd", "t2", "flair"] if (run_dir / f"{m}.nii.gz").exists()]
+    if not mod_list:
+        mod_list = ["t1", "t1gd", "t2", "flair"]
+
     return {
         "run_id": run_id,
-        "dimensions": [int(x) for x in data.shape[:3]],
-        "shape": [int(x) for x in data.shape[:3]],
-        "spacing": [round(float(z), 4) for z in zooms],
-        "voxel_spacing": [round(float(z), 4) for z in zooms],
+        "modalities": mod_list,
+        "dimensions": shape_list,
+        "shape": {
+            "x": shape_list[0],
+            "y": shape_list[1],
+            "z": shape_list[2],
+        },
+        "shape_list": shape_list,
+        "spacing": spacing_list,
+        "voxel_spacing": spacing_list,
+        "zooms": {
+            "x": spacing_list[0] if len(spacing_list) > 0 else 1.0,
+            "y": spacing_list[1] if len(spacing_list) > 1 else 1.0,
+            "z": spacing_list[2] if len(spacing_list) > 2 else 1.0,
+        },
         "affine": affine.round(6).tolist(),
         "orientation": orientation,
         "canonical_orientation": "RAS",
-        "canonical_dimensions": [int(x) for x in canonical.shape[:3]],
+        "canonical_dimensions": canonical_dims,
         "canonical_spacing": canonical_zooms,
         "planes": {
-            "sagittal": {"axis": 0, "count": int(canonical.shape[0])},
-            "coronal": {"axis": 1, "count": int(canonical.shape[1])},
-            "axial": {"axis": 2, "count": int(canonical.shape[2])},
+            "sagittal": {
+                "axis": 0,
+                "count": int(canonical_dims[0]),
+                "max_slice": max(0, int(canonical_dims[0]) - 1),
+                "default_slice": int(canonical_dims[0]) // 2,
+            },
+            "coronal": {
+                "axis": 1,
+                "count": int(canonical_dims[1]),
+                "max_slice": max(0, int(canonical_dims[1]) - 1),
+                "default_slice": int(canonical_dims[1]) // 2,
+            },
+            "axial": {
+                "axis": 2,
+                "count": int(canonical_dims[2]),
+                "max_slice": max(0, int(canonical_dims[2]) - 1),
+                "default_slice": int(canonical_dims[2]) // 2,
+            },
         },
     }
 
