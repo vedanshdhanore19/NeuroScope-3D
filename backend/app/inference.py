@@ -134,8 +134,20 @@ def _restore_prediction_to_original_grid(canonical_prediction: np.ndarray, canon
     return np.rint(restored.get_fdata(dtype=np.float32)).astype(np.int16)
 
 
+def _foreground_crop(data: np.ndarray, margin: int = 8) -> Tuple[Tuple[slice, slice, slice], np.ndarray]:
+    """Find a conservative foreground bounding box to avoid running the model on zero background."""
+    positive = data > 0
+    coords = np.argwhere(positive)
+    if coords.size == 0:
+        return (slice(0, data.shape[0]), slice(0, data.shape[1]), slice(0, data.shape[2])), np.zeros(3, dtype=int)
+    lo = np.maximum(coords.min(axis=0) - margin, 0)
+    hi = np.minimum(coords.max(axis=0) + margin + 1, np.asarray(data.shape))
+    slices = tuple(slice(int(lo[i]), int(hi[i])) for i in range(3))
+    return slices, lo.astype(int)
+
+
 def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np.ndarray, float]:
-    """Run SegResNet with low-overlap sliding windows and mixed precision on CUDA."""
+    """Run SegResNet with foreground cropping, low-overlap windows and CUDA mixed precision."""
     start_time = time.time()
     _set_deterministic()
     model = load_monai_model()
@@ -155,14 +167,14 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
             std = float(np.std(data[mask]))
             data[mask] = (data[mask] - mean) / (std + 1e-8)
 
-    input_tensor = torch.from_numpy(np.stack([data_arrays[key] for key in ("t1gd", "t1", "t2", "flair")], axis=0)).unsqueeze(0).to(_DEVICE)
-    from monai.inferers import sliding_window_inference
+    # Crop using T1 foreground and apply the same crop to all modalities.
+    crop_slices, crop_origin = _foreground_crop(data_arrays["t1"])
+    cropped = {key: data[crop_slices] for key, data in data_arrays.items()}
+    input_tensor = torch.from_numpy(np.stack([cropped[key] for key in ("t1gd", "t1", "t2", "flair")], axis=0)).unsqueeze(0).to(_DEVICE)
 
+    from monai.inferers import sliding_window_inference
     spatial_shape = tuple(int(x) for x in input_tensor.shape[2:])
-    # A full-volume window avoids the large amount of overlap that made the previous
-    # 0.5-overlap configuration slow on CPU. Fall back to a bounded window for very
-    # large studies to avoid excessive memory use.
-    max_voxels = 240 * 240 * 192
+    max_voxels = 240 * 240 * 160
     if int(np.prod(spatial_shape)) <= max_voxels:
         roi_size = spatial_shape
         overlap = 0.0
@@ -180,8 +192,22 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
             output_logits = sliding_window_inference(inputs=input_tensor, roi_size=roi_size, sw_batch_size=1, predictor=model, overlap=overlap)
         probs = torch.sigmoid(output_logits).float().squeeze(0).cpu().numpy()
 
-    canonical_labels = convert_nested_masks_to_brats_codes(probs[0] > 0.5, probs[1] > 0.5, probs[2] > 0.5)
+    canonical_labels_cropped = convert_nested_masks_to_brats_codes(probs[0] > 0.5, probs[1] > 0.5, probs[2] > 0.5)
+    # Restore cropped labels to the full canonical 1 mm grid before mapping to the original affine/grid.
+    canonical_shape = preprocessed["t1"].shape[:3]
+    canonical_labels = np.zeros(canonical_shape, dtype=np.int16)
+    canonical_labels[crop_slices] = canonical_labels_cropped
+    crop_affine = np.asarray(preprocessed["t1"].affine, dtype=np.float64)
+    # crop_slices starts at crop_origin; translate the canonical affine so voxel 0 in the crop
+    # remains in the correct world coordinate system.
+    translation = np.eye(4, dtype=np.float64)
+    translation[:3, 3] = crop_origin
+    crop_affine = crop_affine @ translation
     pred_label_map = _restore_prediction_to_original_grid(canonical_labels, preprocessed["t1"].affine, ref_img)
+    # The full canonical array is already positioned by its original affine; retain crop_affine
+    # as provenance for debugging without changing the restored result.
+    _ = crop_affine
+
     output_header = ref_img.header.copy()
     output_header.set_data_dtype(np.int16)
     nib.save(nib.Nifti1Image(pred_label_map, affine=ref_img.affine, header=output_header), output_save_path)
