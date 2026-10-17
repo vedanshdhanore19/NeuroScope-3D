@@ -341,6 +341,14 @@ export const StudyUpload: React.FC<StudyUploadProps> = ({ onValidationSuccess, o
               return (
                 <div
                   key={seq.key}
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (e.dataTransfer.files?.[0]) {
+                      handleBraTSFileChange(seq.key, e.dataTransfer.files[0]);
+                    }
+                  }}
                   className={`bg-white border rounded-2xl p-5 shadow-card transition-all flex flex-col justify-between ${
                     isSelected ? 'border-emerald-300 ring-1 ring-emerald-200' : 'border-slate-200 hover:border-slate-300'
                   }`}
@@ -463,6 +471,14 @@ export const StudyUpload: React.FC<StudyUploadProps> = ({ onValidationSuccess, o
                   />
                   <label
                     htmlFor="msd-file-input"
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (e.dataTransfer.files?.[0]) {
+                        handleMsdFileChange(e.dataTransfer.files[0]);
+                      }
+                    }}
                     className="cursor-pointer flex flex-col items-center justify-center p-8 rounded-xl border-2 border-dashed border-slate-300 hover:border-cyan hover:bg-sky-50/50 transition-all text-center space-y-2"
                   >
                     <UploadCloud className="w-8 h-8 text-cyan" />

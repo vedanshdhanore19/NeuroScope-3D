@@ -15,9 +15,10 @@ import {
 
 interface NavbarProps {
   onOpenAuth: () => void;
+  onRefreshHealth?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onOpenAuth }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onOpenAuth, onRefreshHealth }) => {
   const {
     activeTab,
     setActiveTab,
@@ -99,8 +100,11 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAuth }) => {
         <div className="hidden sm:flex items-center space-x-3">
           
           {/* Latency / Health Pill */}
-          <div
-            className={`flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-mono font-medium border ${
+          <button
+            type="button"
+            onClick={onRefreshHealth}
+            title="Click to refresh health latency"
+            className={`flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-mono font-medium border cursor-pointer hover:opacity-90 transition-opacity ${
               health.status === 'online'
                 ? isModelReady
                   ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
@@ -120,7 +124,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAuth }) => {
                 ? `Online (${health.latencyMs}ms)`
                 : 'Offline'}
             </span>
-          </div>
+          </button>
 
           {/* New Analysis Button */}
           <button

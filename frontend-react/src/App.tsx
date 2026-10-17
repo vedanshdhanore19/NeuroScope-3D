@@ -129,7 +129,7 @@ export const App: React.FC = () => {
         'success',
         `Segmentation completed in ${results.inference_time_seconds.toFixed(2)}s!`
       );
-      setActiveTab('results');
+      setActiveTab('viewer');
     } catch (err: any) {
       console.error('Segmentation error:', err);
       const detail = err.response?.data?.detail;
