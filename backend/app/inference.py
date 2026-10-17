@@ -2,18 +2,13 @@
 
 Inference is disabled unless a trained checkpoint is explicitly configured.
 A randomly initialized network must never be presented as a tumor segmentation.
+
+The preprocessing path deliberately normalizes orientation and spacing before
+inference, then maps the BraTS label map back to the original T1 grid/affine.
 """
-import os
-import time
-from pathlib import Path
-from typing import Dict, Tuple
-
-import nibabel as nib
-import numpy as np
-import torch
-
 import hashlib
 import os
+import random
 import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -21,6 +16,7 @@ from typing import Dict, Optional, Tuple
 import nibabel as nib
 import numpy as np
 import torch
+from nibabel.processing import resample_from_to, resample_to_output
 
 from .config import BASE_DIR, LABEL_ED, LABEL_ET, LABEL_NCR
 
@@ -36,6 +32,20 @@ DEFAULT_BUNDLE_WEIGHTS = (
     / "models"
     / "model.pt"
 )
+
+
+def _set_deterministic() -> None:
+    """Make preprocessing/inference reproducible across repeated runs."""
+    seed = int(os.getenv("NEUROSCOPE_SEED", "0"))
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 def resolve_model_checkpoint_path() -> Optional[Path]:
@@ -103,7 +113,6 @@ def load_monai_model(force_reload: bool = False):
     try:
         from monai.networks.nets import SegResNet
 
-        # Matches official MONAI brats_mri_segmentation v0.5.4 configs
         model = SegResNet(
             spatial_dims=3,
             in_channels=4,
@@ -125,11 +134,7 @@ def load_monai_model(force_reload: bool = False):
         if not isinstance(state_dict, dict):
             raise ValueError("Checkpoint does not contain a state dictionary.")
 
-        # Strip 'module.' prefix if model was saved using DistributedDataParallel / DataParallel
-        state_dict = {
-            key.removeprefix("module."): value
-            for key, value in state_dict.items()
-        }
+        state_dict = {key.removeprefix("module."): value for key, value in state_dict.items()}
         model.load_state_dict(state_dict, strict=True)
         model.eval()
         _MODEL_CACHE = model
@@ -145,37 +150,65 @@ def convert_nested_masks_to_brats_codes(
     tc_mask: np.ndarray, wt_mask: np.ndarray, et_mask: np.ndarray
 ) -> np.ndarray:
     """Convert TC, WT, ET masks into BraTS-style labels 1, 2, and 4."""
-    # Enforce the expected nesting so overlapping threshold outputs are resolved
-    # consistently: ET is a subset of TC, which is a subset of WT.
     wt_mask = np.asarray(wt_mask, dtype=bool)
     tc_mask = np.asarray(tc_mask, dtype=bool) & wt_mask
     et_mask = np.asarray(et_mask, dtype=bool) & tc_mask
 
     brats_map = np.zeros(wt_mask.shape, dtype=np.int16)
-    brats_map[wt_mask & ~tc_mask] = LABEL_ED   # 2: Peritumoral edema
-    brats_map[tc_mask & ~et_mask] = LABEL_NCR  # 1: Necrotic & non-enhancing tumor core
-    brats_map[et_mask] = LABEL_ET             # 4: Enhancing tumor
+    brats_map[wt_mask & ~tc_mask] = LABEL_ED
+    brats_map[tc_mask & ~et_mask] = LABEL_NCR
+    brats_map[et_mask] = LABEL_ET
     return brats_map
 
 
+def _canonical_one_mm_images(images: Dict[str, nib.Nifti1Image]) -> Dict[str, nib.Nifti1Image]:
+    """Canonicalize all sequences to RAS and resample them onto one 1 mm grid."""
+    canonical = {key: nib.as_closest_canonical(img) for key, img in images.items()}
+    reference = resample_to_output(canonical["t1"], voxel_sizes=(1.0, 1.0, 1.0), order=3)
+    result = {"t1": reference}
+    for key, image in canonical.items():
+        if key == "t1":
+            continue
+        result[key] = resample_from_to(image, reference, order=3)
+    return result
+
+
+def _restore_prediction_to_original_grid(
+    canonical_prediction: np.ndarray,
+    canonical_affine: np.ndarray,
+    reference_img: nib.Nifti1Image,
+) -> np.ndarray:
+    """Inverse reorientation/resampling: return labels on the original input grid."""
+    prediction_img = nib.Nifti1Image(
+        canonical_prediction.astype(np.int16), canonical_affine
+    )
+    restored = resample_from_to(
+        prediction_img,
+        (reference_img.shape[:3], reference_img.affine),
+        order=0,
+    )
+    return np.rint(restored.get_fdata(dtype=np.float32)).astype(np.int16)
+
+
 def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np.ndarray, float]:
-    """Run inference only with a successfully loaded trained checkpoint."""
+    """Run trained MONAI inference on an RAS 1 mm grid and restore original geometry."""
     start_time = time.time()
+    _set_deterministic()
     model = load_monai_model()
 
     images = {key: nib.load(file_paths[key]) for key in ("t1gd", "t1", "t2", "flair")}
     ref_img = images["t1"]
-    ref_shape = ref_img.shape
+    ref_shape = ref_img.shape[:3]
     for key, img in images.items():
-        if img.shape != ref_shape or not np.allclose(img.affine, ref_img.affine, atol=1e-3):
+        if img.shape[:3] != ref_shape or not np.allclose(img.affine, ref_img.affine, atol=1e-3):
             raise ValueError(f"{key.upper()} image does not match T1 dimensions/affine.")
 
+    preprocessed = _canonical_one_mm_images(images)
     data_arrays = {
-        key: img.get_fdata(dtype=np.float32)
-        for key, img in images.items()
+        key: image.get_fdata(dtype=np.float32)
+        for key, image in preprocessed.items()
     }
 
-    # Normalize intensity: nonzero=True, channel_wise=True per MONAI bundle specification
     for data in data_arrays.values():
         mask = data > 0
         if np.any(mask):
@@ -183,16 +216,12 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
             std = float(np.std(data[mask]))
             data[mask] = (data[mask] - mean) / (std + 1e-8)
 
-    # 4-channel input order according to bundle metadata.json:
-    # 0: T1c (t1gd), 1: T1, 2: T2, 3: FLAIR
-    input_tensor = np.stack(
-        [data_arrays[key] for key in ("t1gd", "t1", "t2", "flair")], axis=0
-    )
-    input_tensor = torch.from_numpy(input_tensor).unsqueeze(0).to(_DEVICE)
+    input_tensor = torch.from_numpy(
+        np.stack([data_arrays[key] for key in ("t1gd", "t1", "t2", "flair")], axis=0)
+    ).unsqueeze(0).to(_DEVICE)
 
     from monai.inferers import sliding_window_inference
 
-    # Adapt roi_size to input shape; ensure each dimension is divisible by 8 (for 3-level SegResNet downsampling)
     spatial_shape = input_tensor.shape[2:]
     roi_size = (
         min(240, spatial_shape[0]),
@@ -214,9 +243,13 @@ def run_inference(file_paths: Dict[str, str], output_save_path: str) -> Tuple[np
     tc_mask = probs[0] > 0.5
     wt_mask = probs[1] > 0.5
     et_mask = probs[2] > 0.5
-    pred_label_map = convert_nested_masks_to_brats_codes(tc_mask, wt_mask, et_mask)
+    canonical_labels = convert_nested_masks_to_brats_codes(tc_mask, wt_mask, et_mask)
+    pred_label_map = _restore_prediction_to_original_grid(
+        canonical_labels,
+        preprocessed["t1"].affine,
+        ref_img,
+    )
 
-    # Ensure output header specifies int16 datatype for correct medical viewer interpretation
     output_header = ref_img.header.copy()
     output_header.set_data_dtype(np.int16)
     output_nifti = nib.Nifti1Image(pred_label_map, affine=ref_img.affine, header=output_header)
