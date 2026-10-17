@@ -1,7 +1,8 @@
 import { create } from 'zustand';
+import type { ActiveTab } from '../types/api';
 
 interface StudyState {
-  activeTab: 'dashboard' | 'upload' | 'viewer' | 'results' | 'reports';
+  activeTab: ActiveTab;
   currentRunId: string | null;
   activeFilenames: Record<string, string>;
   studyDetails: any | null;
@@ -10,7 +11,8 @@ interface StudyState {
   health: any | null;
   isSegmenting: boolean;
   segmentElapsedSeconds: number;
-  setActiveTab: (tab: StudyState['activeTab']) => void;
+  mobileMenuOpen: boolean;
+  setActiveTab: (tab: ActiveTab) => void;
   setRunId: (id: string | null) => void;
   setActiveFilenames: (files: Record<string, string>) => void;
   setStudyDetails: (details: any | null) => void;
@@ -19,6 +21,8 @@ interface StudyState {
   setHealth: (health: any) => void;
   setIsSegmenting: (value: boolean) => void;
   setSegmentElapsedSeconds: (value: number) => void;
+  setMobileMenuOpen: (value: boolean) => void;
+  resetViewer: () => void;
 }
 
 const persistedRun = typeof window !== 'undefined' ? localStorage.getItem('neuroscope.currentRunId') : null;
@@ -33,6 +37,7 @@ export const useStudyStore = create<StudyState>((set) => ({
   health: null,
   isSegmenting: false,
   segmentElapsedSeconds: 0,
+  mobileMenuOpen: false,
   setActiveTab: (activeTab) => set({ activeTab }),
   setRunId: (currentRunId) => {
     if (typeof window !== 'undefined') {
@@ -48,4 +53,19 @@ export const useStudyStore = create<StudyState>((set) => ({
   setHealth: (health) => set({ health }),
   setIsSegmenting: (isSegmenting) => set({ isSegmenting }),
   setSegmentElapsedSeconds: (segmentElapsedSeconds) => set({ segmentElapsedSeconds }),
+  setMobileMenuOpen: (mobileMenuOpen) => set({ mobileMenuOpen }),
+  resetViewer: () => {
+    if (typeof window !== 'undefined') localStorage.removeItem('neuroscope.currentRunId');
+    set({
+      activeTab: 'upload',
+      currentRunId: null,
+      activeFilenames: {},
+      studyDetails: null,
+      segmentationResults: null,
+      hasPrediction: false,
+      isSegmenting: false,
+      segmentElapsedSeconds: 0,
+      mobileMenuOpen: false,
+    });
+  },
 }));
