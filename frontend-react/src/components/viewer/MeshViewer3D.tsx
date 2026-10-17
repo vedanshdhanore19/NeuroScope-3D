@@ -161,17 +161,53 @@ export const MeshViewer3D: React.FC<MeshViewer3DProps> = ({
       window.removeEventListener('mouseup', handleMouseUp);
       dom.removeEventListener('wheel', handleWheel);
       window.removeEventListener('resize', handleResize);
+
+      // Clean up meshes group
+      if (meshGroup) {
+        meshGroup.children.forEach((child) => {
+          const m = child as THREE.Mesh;
+          if (m.geometry) m.geometry.dispose();
+          if (m.material) {
+            if (Array.isArray(m.material)) m.material.forEach((mat) => mat.dispose());
+            else m.material.dispose();
+          }
+        });
+        meshGroup.clear();
+      }
+
+      // Clean up grid
+      if (grid.geometry) grid.geometry.dispose();
+      if (grid.material) {
+        if (Array.isArray(grid.material)) grid.material.forEach((mat) => mat.dispose());
+        else (grid.material as THREE.Material).dispose();
+      }
+
       renderer.dispose();
     };
   }, []);
+
+  const showWTRef = useRef(showWT);
+  const showTCRef = useRef(showTC);
+  const showETRef = useRef(showET);
+  const wireframeRef = useRef(wireframe);
+  useEffect(() => {
+    showWTRef.current = showWT;
+    showTCRef.current = showTC;
+    showETRef.current = showET;
+    wireframeRef.current = wireframe;
+  }, [showWT, showTC, showET, wireframe]);
 
   // Fetch Marching Cubes Meshes
   useEffect(() => {
     if (!hasPrediction || !runId) return;
 
     let isMounted = true;
-    setIsLoading(true);
-    setError(null);
+    queueMicrotask(() => {
+      if (isMounted) {
+        setIsLoading(true);
+        setError(null);
+      }
+    });
 
     const loadMeshes = async () => {
       try {
@@ -230,14 +266,14 @@ export const MeshViewer3D: React.FC<MeshViewer3DProps> = ({
               metalness: 0.15,
               transparent: true,
               opacity: opacity,
-              wireframe: wireframe,
+              wireframe: wireframeRef.current,
               side: THREE.DoubleSide,
               depthWrite: false, // Ensures inner nested tumors remain clearly visible!
             });
 
             const mesh = new THREE.Mesh(geometry, material);
             mesh.name = `mesh_${region}`;
-            mesh.visible = region === 'WT' ? showWT : region === 'TC' ? showTC : showET;
+            mesh.visible = region === 'WT' ? showWTRef.current : region === 'TC' ? showTCRef.current : showETRef.current;
 
             meshesGroupRef.current?.add(mesh);
           }
@@ -305,6 +341,7 @@ export const MeshViewer3D: React.FC<MeshViewer3DProps> = ({
             onClick={() => setShowInfoPopover(!showInfoPopover)}
             className="p-1.5 rounded-full bg-slate-900/90 hover:bg-slate-800 text-slate-300 border border-slate-700 shadow-md transition-colors"
             title="About this 3D reconstruction"
+            aria-label="About this 3D reconstruction"
           >
             <Info className="w-4 h-4" />
           </button>
@@ -315,6 +352,7 @@ export const MeshViewer3D: React.FC<MeshViewer3DProps> = ({
           <button
             type="button"
             onClick={() => setAutoRotate(!autoRotate)}
+            aria-label="Toggle auto rotation"
             className={`px-3 py-1 rounded-full text-xs font-semibold border backdrop-blur-md transition-all ${
               autoRotate
                 ? 'bg-sky-500/20 border-sky-400/40 text-sky-300'
@@ -327,6 +365,7 @@ export const MeshViewer3D: React.FC<MeshViewer3DProps> = ({
           <button
             type="button"
             onClick={() => setWireframe(!wireframe)}
+            aria-label="Toggle wireframe mode"
             className={`px-3 py-1 rounded-full text-xs font-semibold border backdrop-blur-md transition-all ${
               wireframe
                 ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
@@ -341,6 +380,7 @@ export const MeshViewer3D: React.FC<MeshViewer3DProps> = ({
             onClick={handleResetCamera}
             className="p-1.5 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors"
             title="Reset Camera Orientation"
+            aria-label="Reset Camera Orientation"
           >
             <RotateCcw className="w-4 h-4" />
           </button>

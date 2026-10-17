@@ -329,6 +329,7 @@ export const OrthogonalViewer: React.FC<OrthogonalViewerProps> = ({
             step="0.05"
             value={brightness}
             onChange={(e) => setBrightness(parseFloat(e.target.value))}
+            aria-label="Adjust slice brightness"
             className="flex-1 accent-cyan cursor-pointer"
           />
           <span className="font-mono w-8 text-right text-slate-700">{brightness.toFixed(2)}</span>
@@ -345,6 +346,7 @@ export const OrthogonalViewer: React.FC<OrthogonalViewerProps> = ({
             step="0.05"
             value={contrast}
             onChange={(e) => setContrast(parseFloat(e.target.value))}
+            aria-label="Adjust slice contrast"
             className="flex-1 accent-cyan cursor-pointer"
           />
           <span className="font-mono w-8 text-right text-slate-700">{contrast.toFixed(2)}</span>
@@ -411,6 +413,7 @@ export const OrthogonalViewer: React.FC<OrthogonalViewerProps> = ({
                 max={maxAxial}
                 value={axialSlice}
                 onChange={(e) => setAxialSlice(parseInt(e.target.value, 10))}
+                aria-label="Axial slice position"
                 className="w-full accent-cyan cursor-pointer"
               />
             </div>
@@ -447,6 +450,7 @@ export const OrthogonalViewer: React.FC<OrthogonalViewerProps> = ({
                 max={maxCoronal}
                 value={coronalSlice}
                 onChange={(e) => setCoronalSlice(parseInt(e.target.value, 10))}
+                aria-label="Coronal slice position"
                 className="w-full accent-mint cursor-pointer"
               />
             </div>
@@ -483,6 +487,7 @@ export const OrthogonalViewer: React.FC<OrthogonalViewerProps> = ({
                 max={maxSagittal}
                 value={sagittalSlice}
                 onChange={(e) => setSagittalSlice(parseInt(e.target.value, 10))}
+                aria-label="Sagittal slice position"
                 className="w-full accent-amber cursor-pointer"
               />
             </div>

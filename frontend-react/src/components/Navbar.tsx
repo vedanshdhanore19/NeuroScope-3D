@@ -171,6 +171,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAuth, onRefreshHealth }) =
                 onClick={() => {
                   if (!isDisabled) {
                     setActiveTab(tab.id);
+                    setMobileMenuOpen(false);
                   }
                 }}
                 disabled={isDisabled}
@@ -193,7 +194,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAuth, onRefreshHealth }) =
             );
           })}
 
-          <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+          <div className="pt-3 border-t border-slate-100 flex flex-col gap-2">
             <button
               onClick={() => {
                 resetViewer();
@@ -203,6 +204,17 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAuth, onRefreshHealth }) =
             >
               <Plus className="w-4 h-4" />
               <span>Start New Analysis</span>
+            </button>
+
+            <button
+              onClick={() => {
+                onOpenAuth();
+                setMobileMenuOpen(false);
+              }}
+              className="w-full py-2 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold flex items-center justify-center space-x-2 border border-slate-200"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Sign In / Access Controls</span>
             </button>
           </div>
         </div>
