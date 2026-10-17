@@ -10,8 +10,9 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({ onOpenAuth, onRefreshHealth }) => {
   const { activeTab, setActiveTab, currentRunId, hasPrediction, health, resetViewer, mobileMenuOpen, setMobileMenuOpen } = useStudyStore();
-  const isOnline = health?.status === 'online';
-  const isModelReady = health?.data?.model?.ready_for_inference ?? false;
+  // FastAPI /health returns status="healthy"; older frontend code expected "online".
+  const isOnline = health?.status === 'healthy' || health?.status === 'online';
+  const isModelReady = health?.model?.ready_for_inference ?? health?.data?.model?.ready_for_inference ?? false;
   const tabs: { id: ActiveTab; label: string; icon: React.ReactNode; requiresPrediction?: boolean }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <Brain className="w-4 h-4" /> },
     { id: 'upload', label: 'New Study', icon: <UploadCloud className="w-4 h-4" /> },
