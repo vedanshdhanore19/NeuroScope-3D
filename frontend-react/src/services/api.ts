@@ -2,7 +2,7 @@ import axios from 'axios';
 import type { HealthResponse } from '../types/api';
 
 // NeuroScope backend uses 8100 locally so it does not collide with other projects.
-const baseURL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8100').replace(/\/$/, '');
+const baseURL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8001').replace(/\/+$/, '');
 export const http = axios.create({ baseURL, timeout: 180000 });
 
 export const api = {
