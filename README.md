@@ -53,7 +53,7 @@ flowchart TD
 
 - **Model Bundle:** Official MONAI Model Zoo bundle `brats_mri_segmentation` v0.5.4.
 - **Architecture:** SegResNet (4 input channels, 3 output channels, `dropout_prob=0.2`).
-- **Verified Checkpoint:** `backend/app/models/brats_mri_segmentation/brats_mri_segmentation/models/model.pt` (SHA-256: `860ccb3f1c21c99d0410ad8a1ac4ef6b8fab60cec0a503b0ba42675741a750ae`).
+- **Model checkpoint:** The large `models/model.pt` weights file is not tracked in this repository. Download the official MONAI bundle before running inference (see Step 5); the API health endpoint reports whether the checkpoint is available.
 - **Supported Dataset Profiles:**
   1. `brats`: Standard 4 separate 3D NIfTI files (`t1`, `t1gd`, `t2`, `flair`) with discrete BraTS labels (0: Background, 1: NCR/NET, 2: ED, 4: ET).
   2. `msd_task01`: Medical Segmentation Decathlon Task01 BrainTumour 4D NIfTI volumes (shape `[X, Y, Z, 4]`). Automatically extracted and mapped (0: FLAIR, 1: T1, 2: T1gd, 3: T2) with MSD label conversion (1: Edema -> 2, 2: Non-enhancing -> 1, 3: Enhancing -> 4).
@@ -109,6 +109,19 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8001 --reload
 
 ---
 
+
+### Step 6: Start the React frontend (separate terminal)
+
+The React/Vite app is in `frontend-react` and defaults to the backend at `http://127.0.0.1:8001`.
+
+```powershell
+cd frontend-react
+npm install
+npm run dev
+```
+
+Open the Vite URL printed in the terminal (normally `http://localhost:5173`). If you change the backend port, set `VITE_API_BASE_URL` in `frontend-react/.env.local` to the same API origin and restart Vite.
+
 ## 4. API Endpoints Reference
 
 | Method | Route | Description |
@@ -127,9 +140,7 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8001 --reload
 
 ## 5. MONAI Bundle Setup & Download Syntax
 
-The verified model checkpoint is bundled in the repository at `backend/app/models/brats_mri_segmentation/...`.
-
-If downloading or updating the bundle from scratch using the MONAI CLI:
+The model bundle metadata/configuration is present in the repository, but the checkpoint weights (`models/model.pt`) are not tracked. Download the official MONAI bundle before running segmentation:
 
 ```powershell
 python -m monai.bundle download --name brats_mri_segmentation --version 0.5.4 --bundle_dir backend/app/models
